@@ -1,0 +1,40 @@
+# Project Development Guidelines## Testing Policy
+**DO NOT** create, run, or suggest tests unless explicitly requested by the user
+**DO NOT** add test files, test cases, or testing frameworks without explicit instruction
+Focus on implementation and functionality over test coverage
+## Documentation Policy
+**DO NOT** create new documentation files or markdown files unless explicitly requested
+**ALWAYS** update existing documentation when making changes
+Refer to and update standard documents rather than creating new ones
+Keep documentation changes minimal and focused
+## Script and File Management
+**ALWAYS** update existing standard scripts rather than creating new ones
+**DO NOT** create temporary fixes or temporary scripts
+If manual steps are required for a temporary fix, clearly call out these manual steps to the user
+Use existing build scripts, deployment scripts, and configuration files
+Maintain consistency with existing project structure
+## Credit Optimization
+**ALWAYS** take the most efficient path that uses fewer credits
+Prefer targeted file updates over reading entire codebases
+Use specific file operations rather than broad searches when possible
+Minimize redundant operations and tool calls
+Focus on the minimal viable solution that addresses the requirement
+## Code Changes
+Make precise, targeted changes to existing files
+Maintain existing code patterns and conventions
+Update related files when making changes (e.g., update types when changing interfaces)
+Preserve existing functionality while adding new features
+## Database Changes
+**ALWAYS** record every DB schema change as a new numbered, idempotent .sql migration in backend/src/database/migrations/ (e.g. 014_*.sql)
+**DO NOT** alter the schema ad-hoc or edit already-applied migration files; add a new migration instead
+Use idempotent statements (CREATE TABLE IF NOT EXISTS, ALTER TABLE ... ADD COLUMN) so migrations can run safely more than once
+Keep 000_full_schema.sql (the consolidated fresh-install schema) in sync when adding new tables/columns
+Apply new migrations to production before deploying code that depends on them, and clearly call out the migration step to the user
+## Production Readiness
+**ALWAYS** remove excessive console.log statements and debug logs before production deployment
+**ALWAYS** verify database migrations are applied to production before deploying code changes
+**ALWAYS** check for and remove development-only debugging code
+**ALWAYS** perform a complete rebuild of both frontend and backend before production deployment
+**ALWAYS** run complete testing (TypeScript compilation, linting, build verification) before production deployment
+Ensure error handling is production-appropriate (no sensitive information exposed)
+Verify all environment variables are properly configured for production

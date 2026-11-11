@@ -1,0 +1,36 @@
+const express = require("express");
+const ctrl = require("./auth.controller");
+const rules = require("./auth.validators");
+const { validate } = require("../../middleware/validate");
+const { requireAuth } = require("../../middleware/auth");
+const {
+  loginLimiter,
+  otpLimiter,
+  registerLimiter,
+} = require("../../middleware/rateLimit");
+
+const router = express.Router();
+
+/* Anything that can be guessed at — a password, a code — is rate limited. */
+
+router.post("/register", registerLimiter, rules.registerRules, validate, ctrl.register);
+router.post("/verify-otp", otpLimiter, rules.otpRules, validate, ctrl.verifyOtp);
+router.post("/resend-otp", otpLimiter, rules.emailOnlyRules, validate, ctrl.resendOtp);
+
+router.post("/login", loginLimiter, rules.loginRules, validate, ctrl.login);
+router.post("/refresh", ctrl.refresh);
+router.post("/logout", ctrl.logout);
+
+router.post("/forgot-password", otpLimiter, rules.emailOnlyRules, validate, ctrl.forgotPassword);
+router.post("/reset-password", otpLimiter, rules.resetRules, validate, ctrl.resetPassword);
+
+router.get("/me", requireAuth, ctrl.me);
+router.post(
+  "/change-password",
+  requireAuth,
+  rules.changePasswordRules,
+  validate,
+  ctrl.changePassword
+);
+
+module.exports = router;

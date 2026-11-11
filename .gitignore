@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Secret environment files (never push these)
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# System files
+.DS_Store
+Thumbs.db

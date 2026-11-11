@@ -1,0 +1,116 @@
+/**
+ * The design system, as CSS custom properties.
+ *
+ * Tailwind reads these same variables (see tailwind.config.js), and React
+ * Bootstrap's components are styled by pointing Bootstrap's variables at
+ * them — so switching theme is nothing more than swapping the values below.
+ *
+ * Two themes, black (the default) and white, chosen by `data-theme` on
+ * <html>. The names stay the same in both: `ink` is always the surface and
+ * `paper` always the text, whichever of the two is dark.
+ *
+ * One accent. Red carries calls to action and prices, and nothing else is
+ * coloured — so the price on a card is the loudest thing on it, which is
+ * what this product is actually about.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- surface ---- */
+  /* Channels as well as the colour, so Tailwind's `bg-ink/85` works. */
+  --ink-rgb: 5 5 5;
+  --ink: #050505;
+  --ink-raised: #111111;
+  --ink-high: #1a1a1a;
+  --ink-line: #2a2a2a;
+
+  /* ---- accent ---- */
+  --rose: #e11d2e;
+  --rose-deep: #b3121f;
+  --rose-soft: rgba(225, 29, 46, 0.12);
+  --rose-line: rgba(225, 29, 46, 0.32);
+  --on-rose: #ffffff; /* text on a red fill */
+
+  /* ---- type ----
+     All text is pure white on the black theme and pure black on the white
+     one. muted and faint are kept as names so components need not change. */
+  --paper: #ffffff;
+  --muted: #ffffff;
+  --faint: #ffffff;
+
+  /* ---- meaning, used sparingly ---- */
+  --good: #45c08a;
+  --warn: #e0a340;
+  --bad: #ff7a59;
+  --good-soft: rgba(69, 192, 138, 0.1);
+  --good-line: rgba(69, 192, 138, 0.3);
+  --warn-soft: rgba(224, 163, 64, 0.1);
+  --warn-line: rgba(224, 163, 64, 0.3);
+  --bad-soft: rgba(255, 122, 89, 0.08);
+  --bad-line: rgba(255, 122, 89, 0.3);
+
+  /* ---- shape ---- */
+  --r-card: 20px;
+  --r-panel: 24px;
+  --r-input: 12px;
+  --r-pill: 999px;
+
+  --shadow-lift: 0 18px 50px -18px rgba(0, 0, 0, 0.75);
+  --shadow-glow: 0 12px 40px -12px rgba(225, 29, 46, 0.45);
+
+  /* ---- spacing scale ---- */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-6: 1.5rem;
+  --s-8: 2rem;
+  --s-12: 3rem;
+  --s-16: 4rem;
+  --s-24: 6rem;
+
+  --nav-h: 68px;
+  --tabbar-h: 64px;
+
+  /* ---- Bootstrap, repainted ----
+     React Bootstrap gives us the navbar, modal, tabs, dropdown, toast and
+     pagination. Rather than fight its CSS, we hand it our palette. */
+  --bs-body-bg: var(--ink);
+  --bs-body-color: var(--paper);
+  --bs-border-color: var(--ink-line);
+  --bs-primary: var(--rose);
+  --bs-primary-rgb: 225, 29, 46;
+  --bs-link-color: var(--rose);
+  --bs-link-hover-color: var(--rose-deep);
+  --bs-border-radius: var(--r-input);
+  --bs-font-sans-serif: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --bs-emphasis-color: var(--paper);
+  --bs-secondary-color: var(--muted);
+  --bs-tertiary-bg: var(--ink-raised);
+}
+
+/* ---- the white theme ----
+   Same accent, same shapes. Only the surfaces, the text and the shadows
+   change, plus the three status colours, darkened so they still read on
+   white. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --ink-rgb: 255 255 255;
+  --ink: #ffffff;
+  --ink-raised: #f6f6f6;
+  --ink-high: #ececec;
+  --ink-line: #dedede;
+
+  --paper: #000000;
+  --muted: #000000;
+  --faint: #000000;
+
+  --good: #1f9d63;
+  --warn: #b7791f;
+  --bad: #d9480f;
+
+  --shadow-lift: 0 18px 40px -22px rgba(0, 0, 0, 0.22);
+  --shadow-glow: 0 10px 30px -12px rgba(225, 29, 46, 0.35);
+}

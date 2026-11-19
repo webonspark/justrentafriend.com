@@ -21,7 +21,7 @@ const password = () =>
     .withMessage("Include a number.");
 
 const registerRules = [
-  body("role").isIn(["user", "customer"]).withMessage("Choose how you are joining."),
+  body("role").isIn(["customer", "companion"]).withMessage("Choose how you are joining."),
   body("fullName").trim().isLength({ min: 2, max: 120 }).withMessage("Enter your full name."),
   body("email").trim().isEmail().withMessage("Enter a valid email address.").normalizeEmail(),
   body("mobile")

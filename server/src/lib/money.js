@@ -26,12 +26,12 @@ function formatINR(paise) {
 }
 
 /**
- * Splits what the User pays into the company's commission and the
- * Customer's payout.
+ * Splits what the Customer pays into the company's commission and the
+ * Companion's payout.
  *
- * The commission comes out of the Customer's price — it is not added on
- * top. The User pays exactly the price shown. At 18% on ₹2,000 the company
- * keeps ₹360 and the Customer receives ₹1,640.
+ * The commission comes out of the Companion's price — it is not added on
+ * top. The Customer pays exactly the price shown. At 18% on ₹2,000 the company
+ * keeps ₹360 and the Companion receives ₹1,640.
  *
  * The commission is rounded down and the payout takes the remainder, so the
  * two always add back to the exact total with no stray paise.

@@ -17,3 +17,6 @@ npm-debug.log*
 # System files
 .DS_Store
 Thumbs.db
+# Local data (SQLite database, uploaded photos and ID documents)
+server/*.sqlite
+server/uploads/

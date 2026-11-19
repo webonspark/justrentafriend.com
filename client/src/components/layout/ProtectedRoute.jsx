@@ -31,11 +31,12 @@ export function RequireAuth() {
  * go and buy one.
  */
 export function RequireMembership() {
-  const { signedIn, ready, memberActive } = useAuth();
+  const { signedIn, ready, memberActive, user } = useAuth();
   const location = useLocation();
 
   if (!ready) return <Waiting />;
   if (!signedIn) return <Navigate to="/login" state={{ from: location }} replace />;
+  if (!user.mobileVerified) return <Navigate to="/verify-mobile" state={{ from: location }} replace />;
   if (!memberActive) return <Navigate to="/membership" state={{ from: location }} replace />;
 
   return <Outlet />;

@@ -4,7 +4,7 @@
  * Change these two lines and the whole site follows — the navbar, the page
  * titles, the emails are set by the matching values in the server's .env.
  */
-export const BRAND = import.meta.env.VITE_BRAND_NAME || "Kindred";
+export const BRAND = import.meta.env.VITE_BRAND_NAME || "Just Rent a Friend";
 export const CITY = import.meta.env.VITE_LAUNCH_CITY || "Bengaluru";
 
 /** Nobody under this age may hold an account. Enforced on the server too. */

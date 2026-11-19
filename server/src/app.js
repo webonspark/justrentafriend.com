@@ -33,10 +33,13 @@ app.use(
 );
 
 // 25mb would be generous; photos go through multer, not JSON.
-app.use(express.json({ limit: "1mb" }));
+// The raw bytes are kept for the payment webhook, whose signature covers them.
+app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 app.use(cookieParser());
 
+// KYC documents and selfies are never served statically — admins stream them.
+app.use(`/${env.uploads.dir}/private`, (req, res) => res.status(404).end());
 app.use(`/${env.uploads.dir}`, express.static(path.join(process.cwd(), env.uploads.dir), {
   maxAge: "7d",
 }));

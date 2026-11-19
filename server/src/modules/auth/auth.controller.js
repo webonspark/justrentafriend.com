@@ -69,6 +69,48 @@ exports.login = async (req, res, next) => {
   }
 };
 
+exports.google = async (req, res, next) => {
+  try {
+    const result = await service.googleLogin(req.body, meta(req));
+    if (result.needsSignup) return res.json(result);
+    return sendSession(res, result);
+  } catch (err) {
+    return next(err);
+  }
+};
+
+exports.sendMobileOtp = async (req, res, next) => {
+  try {
+    return res.json(await service.sendMobileOtp(req.user));
+  } catch (err) {
+    return next(err);
+  }
+};
+
+exports.verifyMobile = async (req, res, next) => {
+  try {
+    return res.json(await service.verifyMobile(req.user, req.body.code));
+  } catch (err) {
+    return next(err);
+  }
+};
+
+exports.sendLoginOtp = async (req, res, next) => {
+  try {
+    return res.json(await service.sendLoginOtp(req.body));
+  } catch (err) {
+    return next(err);
+  }
+};
+
+exports.loginWithOtp = async (req, res, next) => {
+  try {
+    return sendSession(res, await service.loginWithOtp(req.body, meta(req)));
+  } catch (err) {
+    return next(err);
+  }
+};
+
 exports.forgotPassword = async (req, res, next) => {
   try {
     const result = await service.forgotPassword(req.body);

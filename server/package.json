@@ -2,7 +2,7 @@
   "name": "kindred-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Kindred — paid connection platform. Express + Sequelize + MySQL.",
+  "description": "Just Rent a Friend — paid connection platform. Express + Sequelize + MySQL.",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
@@ -37,5 +37,9 @@
     "nodemon": "^3.1.4",
     "sqlite3": "^5.1.7",
     "supertest": "^7.0.0"
+  },
+  "allowScripts": {
+    "sharp@0.33.5": true,
+    "sqlite3@5.1.7": true
   }
 }

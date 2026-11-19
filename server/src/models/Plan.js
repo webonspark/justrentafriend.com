@@ -17,7 +17,7 @@ module.exports = (sequelize) => {
       gstPct: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 18 },
 
       // null means the plan is for both roles.
-      forRole: { type: DataTypes.ENUM("user", "customer"), allowNull: true },
+      forRole: { type: DataTypes.ENUM("customer", "companion"), allowNull: true },
 
       isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
       sortOrder: { type: DataTypes.TINYINT.UNSIGNED, allowNull: false, defaultValue: 0 },

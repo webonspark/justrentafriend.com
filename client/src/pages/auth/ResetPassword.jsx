@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
+import AuthShell from "../../components/layout/AuthShell";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../../services/api";
-import { Alert, Button, Field } from "../../components/ui";
+import { Alert, Button, Field, PasswordField } from "../../components/ui";
 
 /**
  * Finishing a password reset: the emailed code, then the new password.
@@ -64,7 +65,7 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="k-wrap py-12 lg:py-24">
+    <AuthShell>
       <div className="k-narrow">
         <h1 className="mb-3 text-[2rem] sm:text-[2.5rem]">Set a new password</h1>
         <p className="mb-9 text-muted">
@@ -103,10 +104,9 @@ export default function ResetPassword() {
             required
           />
 
-          <Field
+          <PasswordField
             label="New password"
             id="password"
-            type="password"
             value={form.password}
             onChange={set("password")}
             error={errors.password}
@@ -115,10 +115,9 @@ export default function ResetPassword() {
             required
           />
 
-          <Field
+          <PasswordField
             label="New password again"
             id="confirm"
-            type="password"
             value={form.confirm}
             onChange={set("confirm")}
             error={errors.confirm || (mismatch ? "The two passwords do not match." : "")}
@@ -141,6 +140,6 @@ export default function ResetPassword() {
           </Link>
         </p>
       </div>
-    </div>
+    </AuthShell>
   );
 }

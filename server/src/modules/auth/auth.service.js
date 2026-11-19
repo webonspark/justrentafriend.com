@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const env = require("../../config/env");
-const { sequelize, User, Profile, Preference, CustomerRate } = require("../../models");
+const { sequelize, User, Profile, Preference, CompanionRate } = require("../../models");
 const { issueOtp, verifyOtp } = require("../../lib/otp");
 const { sendVerifyEmail, sendResetEmail } = require("../../lib/mailer");
 const { checkDateOfBirth } = require("../../lib/age");
@@ -45,7 +45,7 @@ async function register(payload, meta = {}) {
   const email = tidyEmail(payload.email);
   const mobile = tidyMobile(payload.mobile);
 
-  if (!["user", "customer"].includes(payload.role)) {
+  if (!["customer", "companion"].includes(payload.role)) {
     throw badRequest("Choose whether you are joining to connect or to be listed.");
   }
 
@@ -86,16 +86,21 @@ async function register(payload, meta = {}) {
     );
 
     await Profile.create(
-      { userId: created.id, city: payload.city || env.brand.city },
+      {
+        userId: created.id,
+        city: payload.city || env.brand.city,
+        // Companions wait for admin approval; Customers need none.
+        approvalStatus: created.role === "companion" ? "draft" : "approved",
+      },
       { transaction: t }
     );
     await Preference.create({ userId: created.id }, { transaction: t });
 
-    /* A Customer needs a price before they can be listed. It starts at the
+    /* A Companion needs a price before they can be listed. It starts at the
        admin minimum and they set their own during onboarding. */
-    if (created.role === "customer") {
-      await CustomerRate.create(
-        { customerId: created.id, pricePerHourPaise: env.money.minPricePerHour, isCurrent: true },
+    if (created.role === "companion") {
+      await CompanionRate.create(
+        { companionId: created.id, pricePerHourPaise: env.money.minPricePerHour, isCurrent: true },
         { transaction: t }
       );
     }
@@ -187,7 +192,12 @@ async function login({ identifier, password }, meta = {}) {
   if (user.status === "suspended") {
     throw forbidden("This account is suspended. Contact support.");
   }
-  if (user.status === "deleted") throw refuse();
+  if (user.status === "deleted") {
+    // Signing in during the 30-day grace period cancels the deletion.
+    const grace = user.deletionRequestedAt && Date.now() - new Date(user.deletionRequestedAt) < 30 * 864e5;
+    if (!grace) throw refuse();
+    await user.update({ status: "active", deletionRequestedAt: null });
+  }
 
   if (!user.emailVerified) {
     const { code } = await issueOtp({
@@ -313,7 +323,82 @@ async function logout(token) {
   return { signedOut: true };
 }
 
+/**
+ * Google sign-in, for an account that already exists with that email.
+ * A new person is sent to sign-up with the email filled in, because a
+ * role, date of birth (18+) and mobile number are still needed.
+ * Needs GOOGLE_CLIENT_ID; without it the button is hidden.
+ */
+async function googleLogin({ credential, accessToken }, meta = {}) {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) throw badRequest("Google sign-in is not set up on this server.");
+  // An ID token (Google button / One Tap) or an access token (popup), both
+  // checked with Google, and both must have been issued to our client ID.
+  const query = accessToken
+    ? `access_token=${encodeURIComponent(String(accessToken))}`
+    : `id_token=${encodeURIComponent(String(credential || ""))}`;
+  const r = await fetch(`https://oauth2.googleapis.com/tokeninfo?${query}`);
+  const info = await r.json().catch(() => ({}));
+  const verified = info.email_verified === "true" || info.email_verified === true;
+  const issuedToUs = info.aud === clientId || info.azp === clientId;
+  if (!r.ok || !issuedToUs || !verified || !info.email) {
+    throw unauthorized("Google could not confirm who you are. Try again.");
+  }
+  const user = await User.findOne({ where: { email: tidyEmail(info.email) } });
+  if (!user) return { needsSignup: true, email: info.email, name: info.name || "" };
+  if (["banned", "suspended"].includes(user.status)) throw forbidden("This account cannot sign in. Contact support.");
+  if (user.status === "deleted") await user.update({ status: "active", deletionRequestedAt: null });
+  if (!user.emailVerified) await user.update({ emailVerified: true, status: user.status === "pending" ? "active" : user.status });
+  return startSession(user, meta);
+}
+
+/* ------------------------------ mobile OTP ------------------------------ */
+
+const { sendSms } = require("../../lib/messaging");
+
+/** Sends a code to the signed-in member's mobile to verify it. */
+async function sendMobileOtp(user) {
+  if (user.mobileVerified) return { sent: false, alreadyVerified: true };
+  const { code } = await issueOtp({ userId: user.id, destination: user.mobile, purpose: "verify_mobile" });
+  await sendSms(user.mobile, `${code} is your ${env.brand.name} mobile verification code. It expires in ${env.otp.ttlMinutes} minutes.`);
+  return { sent: true, devCode: env.isProd ? undefined : code };
+}
+
+async function verifyMobile(user, code) {
+  await verifyOtp({ destination: user.mobile, purpose: "verify_mobile", code });
+  await user.update({ mobileVerified: true });
+  return { user: user.toSafeJSON() };
+}
+
+/**
+ * Login with a code sent to the mobile instead of a password. Answers the
+ * same way whether or not the number is registered.
+ */
+async function sendLoginOtp({ mobile }) {
+  const number = tidyMobile(mobile);
+  const user = await User.findOne({ where: { mobile: number } });
+  if (!user || !["active", "warned"].includes(user.status)) return { sent: true };
+  const { code } = await issueOtp({ userId: user.id, destination: number, purpose: "login_mobile" });
+  await sendSms(number, `${code} is your ${env.brand.name} login code. Never share it with anyone.`);
+  return { sent: true, devCode: env.isProd ? undefined : code };
+}
+
+async function loginWithOtp({ mobile, code }, meta = {}) {
+  const number = tidyMobile(mobile);
+  await verifyOtp({ destination: number, purpose: "login_mobile", code });
+  const user = await User.findOne({ where: { mobile: number } });
+  if (!user) throw unauthorized("That code is not right.");
+  // Receiving the code proves the number.
+  if (!user.mobileVerified) await user.update({ mobileVerified: true });
+  return startSession(user, meta);
+}
+
 module.exports = {
+  sendMobileOtp,
+  verifyMobile,
+  sendLoginOtp,
+  loginWithOtp,
+  googleLogin,
   register,
   verifyEmail,
   resendVerification,

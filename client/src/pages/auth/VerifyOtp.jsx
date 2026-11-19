@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import AuthShell from "../../components/layout/AuthShell";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
@@ -105,7 +106,7 @@ export default function VerifyOtp() {
   };
 
   return (
-    <div className="k-wrap py-12 lg:py-24">
+    <AuthShell>
       <div className="k-narrow text-center">
         <h1 className="mb-3 text-[2rem] sm:text-[2.5rem]">Check your email</h1>
         <p className="mb-9 text-muted">
@@ -164,6 +165,6 @@ export default function VerifyOtp() {
           </Link>
         </p>
       </div>
-    </div>
+    </AuthShell>
   );
 }

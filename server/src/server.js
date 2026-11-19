@@ -1,4 +1,6 @@
+const http = require("http");
 const cron = require("node-cron");
+const { Server: SocketServer } = require("socket.io");
 const { Op } = require("sequelize");
 const app = require("./app");
 const env = require("./config/env");
@@ -6,6 +8,10 @@ const sequelize = require("./config/db");
 const { User } = require("./models");
 const { purgeExpiredOtps } = require("./lib/otp");
 const { logger } = require("./lib/logger");
+const realtime = require("./lib/realtime");
+const { verifyAccessToken } = require("./lib/tokens");
+const { sweep } = require("./modules/bookings/booking.service");
+const { purgeDeleted } = require("./modules/account/account.routes");
 
 /**
  * Starts the server, and the handful of jobs that have to run on a clock.
@@ -33,6 +39,16 @@ function scheduleJobs() {
   // Every hour, on the hour.
   cron.schedule("0 * * * *", () => {
     expireMemberships().catch((e) => logger.error(`Membership sweep failed: ${e.message}`));
+  });
+
+  // Bookings: expiries, reminders, auto-completion and payout release.
+  cron.schedule("*/5 * * * *", () => {
+    sweep().catch((e) => logger.error(`Booking sweep failed: ${e.message}`));
+  });
+
+  // Accounts deleted more than 30 days ago are erased.
+  cron.schedule("40 3 * * *", () => {
+    purgeDeleted().catch((e) => logger.error(`Deletion purge failed: ${e.message}`));
   });
 
   // Nightly, well away from the busy hours.
@@ -84,7 +100,26 @@ async function start() {
   await expireMemberships().catch(() => {});
   scheduleJobs();
 
-  app.listen(env.port, () => {
+  /* Socket.IO for live chat and notifications. A socket signs in with the
+     same access token as the API and joins its own room, user:<id>. */
+  const server = http.createServer(app);
+  const io = new SocketServer(server, { cors: { origin: env.clientUrl, credentials: true } });
+  io.use((socket, next) => {
+    try {
+      const claims = verifyAccessToken(socket.handshake.auth?.token || "");
+      if (claims.kind !== "user") return next(new Error("unauthorized"));
+      socket.data.userId = claims.sub;
+      return next();
+    } catch {
+      return next(new Error("unauthorized"));
+    }
+  });
+  io.on("connection", (socket) => socket.join(`user:${socket.data.userId}`));
+  realtime.attach(io);
+
+  await sweep().catch((e) => logger.error(`Booking sweep failed: ${e.message}`));
+
+  server.listen(env.port, () => {
     logger.info(`${env.brand.name} API on http://localhost:${env.port} (${env.nodeEnv})`);
     if (env.mail.transport !== "smtp") {
       logger.info("Email is going to this console — OTPs will print here.");

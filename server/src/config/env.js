@@ -23,7 +23,7 @@ const env = {
   clientUrl: process.env.CLIENT_URL || "http://localhost:5173",
 
   brand: {
-    name: process.env.BRAND_NAME || "Kindred",
+    name: process.env.BRAND_NAME || "Just Rent a Friend",
     city: process.env.LAUNCH_CITY || "Bengaluru",
     supportEmail: process.env.SUPPORT_EMAIL || "support@kindred.example",
     grievanceEmail: process.env.GRIEVANCE_EMAIL || "grievance@kindred.example",

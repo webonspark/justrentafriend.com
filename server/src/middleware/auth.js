@@ -84,7 +84,7 @@ const requireAdminRole =
     return next();
   };
 
-/** Narrows a route to Users or to Customers. */
+/** Narrows a route to Customers or to Companions. */
 const requireRole =
   (...roles) =>
   (req, res, next) => {
@@ -107,6 +107,11 @@ function requireActiveMembership(req, res, next) {
 
   if (!req.user.emailVerified) {
     return next(forbidden("Confirm your email address first."));
+  }
+  if (!req.user.mobileVerified) {
+    const err = forbidden("Verify your mobile number first.");
+    err.code = "mobile_unverified";
+    return next(err);
   }
   if (!req.user.isMemberActive()) {
     return next(

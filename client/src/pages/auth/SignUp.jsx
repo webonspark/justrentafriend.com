@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import AuthShell from "../../components/layout/AuthShell";
+import GoogleButton from "../../components/shared/GoogleButton";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { FiUser, FiHeart, FiCheck } from "react-icons/fi";
 import { BRAND, CITY, MINIMUM_AGE, LEGAL } from "../../config/brand";
 import { api, ApiError } from "../../services/api";
-import { Alert, Badge, Button, Field } from "../../components/ui";
+import { Alert, Badge, Button, Field, PasswordField } from "../../components/ui";
 
 /**
  * Joining.
@@ -18,16 +20,16 @@ import { Alert, Badge, Button, Field } from "../../components/ui";
 
 const ROLES = [
   {
-    id: "user",
+    id: "customer",
     icon: FiUser,
-    title: "I want to meet people",
-    body: "Browse who is nearby, pay for the time you book, and chat once it is confirmed.",
+    title: "I want to book a friend",
+    body: "Find a companion nearby, request a time, pay once they accept, and chat after it is confirmed.",
   },
   {
-    id: "customer",
+    id: "companion",
     icon: FiHeart,
-    title: "I want to be listed",
-    body: "Set your own price per hour, accept the bookings you want, and get paid after each one.",
+    title: "I want to be a companion",
+    body: "Set your own hourly rate, accept the bookings you want, and get paid after each meet.",
   },
 ];
 
@@ -45,7 +47,7 @@ function ageFrom(dateOfBirth) {
 }
 
 const EMPTY = {
-  role: "user",
+  role: "customer",
   fullName: "",
   email: "",
   mobile: "",
@@ -55,7 +57,9 @@ const EMPTY = {
 };
 
 export default function SignUp() {
-  const [form, setForm] = useState(EMPTY);
+  // Arriving from Google sign-in, the email and name are already known.
+  const prefill = useLocation().state || {};
+  const [form, setForm] = useState({ ...EMPTY, email: prefill.email || "", fullName: prefill.fullName || "" });
   const [errors, setErrors] = useState({});
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
@@ -102,12 +106,15 @@ export default function SignUp() {
   };
 
   return (
-    <div className="k-wrap py-12 lg:py-20">
+    <AuthShell wide>
       <div className="mx-auto w-full max-w-lg">
         <h1 className="mb-3 text-[2rem] sm:text-[2.5rem]">Join {BRAND}</h1>
         <p className="mb-9 text-muted">
           Open in {CITY}, for adults {MINIMUM_AGE} and over.
         </p>
+        {prefill.fromGoogle && (
+          <Alert tone="info">Almost there — Google gave us your name and email. Add your mobile, date of birth and a password to finish.</Alert>
+        )}
 
         <Alert>{problem}</Alert>
 
@@ -178,10 +185,9 @@ export default function SignUp() {
             required
           />
 
-          <Field
+          <PasswordField
             label="Password"
             id="password"
-            type="password"
             value={form.password}
             onChange={set("password")}
             error={errors.password}
@@ -225,6 +231,8 @@ export default function SignUp() {
           </Button>
         </form>
 
+        {prefill.fromGoogle ? null : <GoogleButton label="Sign up with Google" />}
+
         <p className="mt-7 text-center text-sm text-muted">
           Already a member?{" "}
           <Link to="/login" className="font-semibold text-rose">
@@ -232,7 +240,7 @@ export default function SignUp() {
           </Link>
         </p>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

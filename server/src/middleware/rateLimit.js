@@ -27,7 +27,7 @@ const byEmail = (windowMinutes, max, message) =>
     max: env.isProd ? max : max * 20,
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => String(req.body?.email || req.ip).toLowerCase(),
+    keyGenerator: (req) => String(req.body?.email || req.body?.mobile || req.user?.id || req.ip).toLowerCase(),
     message: { error: { code: "too_many_requests", message } },
   });
 

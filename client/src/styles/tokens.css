@@ -32,6 +32,13 @@
   --rose-line: rgba(225, 29, 46, 0.32);
   --on-rose: #ffffff; /* text on a red fill */
 
+  /* ---- pink, the warm partner to red (home page and hearts) ---- */
+  --pink: #ff4f9a;
+  --pink-deep: #e0337f;
+  --pink-soft: rgba(255, 79, 154, 0.14);
+  --pink-line: rgba(255, 79, 154, 0.35);
+  --blush: #ffd3e6;
+
   /* ---- type ----
      All text is pure white on the black theme and pure black on the white
      one. muted and faint are kept as names so components need not change. */
@@ -113,4 +120,10 @@
 
   --shadow-lift: 0 18px 40px -22px rgba(0, 0, 0, 0.22);
   --shadow-glow: 0 10px 30px -12px rgba(225, 29, 46, 0.35);
+
+  --pink: #e6337f;
+  --pink-deep: #c41f68;
+  --pink-soft: rgba(230, 51, 127, 0.1);
+  --pink-line: rgba(230, 51, 127, 0.3);
+  --blush: #ffe4ef;
 }

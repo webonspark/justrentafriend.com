@@ -3,11 +3,11 @@ const { DataTypes } = require("sequelize");
 /**
  * An account. One row per person, whichever side of the market they are on.
  *
- *   role "user"      pays to connect with someone
- *   role "customer"  is listed, sets a price per hour, receives payouts
+ *   role "customer"   books and pays for a Companion's time
+ *   role "companion"  is listed, sets a price per hour, receives payouts
  *
  * Membership is compulsory for both. While `membershipStatus` is anything
- * other than "active" a Customer is hidden from Discovery, and neither side
+ * other than "active" a Companion is hidden from Discovery, and neither side
  * can open a chat or make a booking. That rule is enforced on the server,
  * in Discovery and in the booking service — never in the browser alone.
  *
@@ -21,7 +21,7 @@ module.exports = (sequelize) => {
       id: { type: DataTypes.INTEGER.UNSIGNED, primaryKey: true, autoIncrement: true },
 
       role: {
-        type: DataTypes.ENUM("user", "customer"),
+        type: DataTypes.ENUM("customer", "companion"),
         allowNull: false,
       },
 

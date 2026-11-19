@@ -1,9 +1,11 @@
 import { useState } from "react";
+import AuthShell from "../../components/layout/AuthShell";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { BRAND } from "../../config/brand";
-import { ApiError } from "../../services/api";
+import { api, ApiError } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
-import { Alert, Button, Field } from "../../components/ui";
+import { Alert, Button, Field, PasswordField } from "../../components/ui";
+import GoogleButton from "../../components/shared/GoogleButton";
 
 /**
  * Signing in, with either an email address or a mobile number.
@@ -18,7 +20,11 @@ export default function Login() {
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const { signIn } = useAuth();
+  const { signIn, signInWithOtp } = useAuth();
+  // "password" or "otp": an SMS code to the mobile instead of a password.
+  const [mode, setMode] = useState("password");
+  const [otpSent, setOtpSent] = useState(false);
+  const [devCode, setDevCode] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -36,6 +42,17 @@ export default function Login() {
     setBusy(true);
 
     try {
+      if (mode === "otp") {
+        if (!otpSent) {
+          const r = await api.sendLoginOtp(form.identifier);
+          setOtpSent(true);
+          setDevCode(r.devCode || "");
+          return;
+        }
+        await signInWithOtp({ mobile: form.identifier, code: form.password });
+        navigate(goingTo, { replace: true });
+        return;
+      }
       await signIn(form);
       navigate(goingTo, { replace: true });
     } catch (err) {
@@ -57,35 +74,61 @@ export default function Login() {
   };
 
   return (
-    <div className="k-wrap py-12 lg:py-24">
+    <AuthShell>
       <div className="k-narrow">
         <h1 className="mb-3 text-[2rem] sm:text-[2.5rem]">Welcome back</h1>
         <p className="mb-9 text-muted">Log in to {BRAND}.</p>
 
         <Alert>{problem}</Alert>
 
+        <div className="mb-6 flex gap-2">
+          {[["password", "Password"], ["otp", "OTP to my mobile"]].map(([id, label]) => (
+            <Button key={id} type="button" size="sm" variant={mode === id ? "primary" : "outline"}
+              onClick={() => { setMode(id); setOtpSent(false); setDevCode(""); setProblem(""); setForm((f) => ({ ...f, password: "" })); }}>
+              {label}
+            </Button>
+          ))}
+        </div>
+
         <form onSubmit={submit} noValidate>
           <Field
-            label="Email or mobile"
+            label={mode === "otp" ? "Mobile number" : "Email or mobile"}
             id="identifier"
+            type={mode === "otp" ? "tel" : "text"}
             value={form.identifier}
             onChange={set("identifier")}
             error={errors.identifier}
-            autoComplete="username"
+            autoComplete={mode === "otp" ? "tel" : "username"}
             autoFocus
             required
           />
 
-          <Field
-            label="Password"
-            id="password"
-            type="password"
-            value={form.password}
-            onChange={set("password")}
-            error={errors.password}
-            autoComplete="current-password"
-            required
-          />
+          {mode === "password" && (
+            <PasswordField
+              label="Password"
+              id="password"
+              value={form.password}
+              onChange={set("password")}
+              error={errors.password}
+              autoComplete="current-password"
+              required
+            />
+          )}
+
+          {mode === "otp" && otpSent && (
+            <>
+              {devCode && <Alert tone="info">Development mode — your code is <strong>{devCode}</strong>.</Alert>}
+              <Field
+                label="Code sent by SMS"
+                id="password"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={form.password}
+                onChange={set("password")}
+                required
+              />
+            </>
+          )}
 
           <div className="mb-7 flex items-center justify-between">
             <label className="flex cursor-pointer items-center gap-2 text-sm text-muted">
@@ -99,9 +142,11 @@ export default function Login() {
           </div>
 
           <Button type="submit" size="lg" block loading={busy}>
-            {busy ? "Logging in" : "Log in"}
+            {mode === "otp" && !otpSent ? "Send code" : busy ? "Logging in" : "Log in"}
           </Button>
         </form>
+
+        <GoogleButton goingTo={goingTo} />
 
         <p className="mt-7 text-center text-sm text-muted">
           New here?{" "}
@@ -110,6 +155,6 @@ export default function Login() {
           </Link>
         </p>
       </div>
-    </div>
+    </AuthShell>
   );
 }

@@ -1,7 +1,7 @@
 const { DataTypes } = require("sequelize");
 
 /**
- * An identity document a Customer uploads before their first payout.
+ * An identity document a Companion uploads before their first payout.
  *
  * `numberMasked` is all that is kept of the number itself — the last four
  * digits — so the full number is never in the database to leak. The file is

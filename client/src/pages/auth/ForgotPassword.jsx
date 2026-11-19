@@ -1,4 +1,5 @@
 import { useState } from "react";
+import AuthShell from "../../components/layout/AuthShell";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../services/api";
 import { Alert, Button, Field } from "../../components/ui";
@@ -32,7 +33,7 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="k-wrap py-12 lg:py-24">
+    <AuthShell>
       <div className="k-narrow">
         <h1 className="mb-3 text-[2rem] sm:text-[2.5rem]">Reset your password</h1>
         <p className="mb-9 text-muted">
@@ -65,6 +66,6 @@ export default function ForgotPassword() {
           </Link>
         </p>
       </div>
-    </div>
+    </AuthShell>
   );
 }

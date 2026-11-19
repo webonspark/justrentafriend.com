@@ -12,7 +12,8 @@ module.exports = (sequelize) => {
     "Payment",
     {
       id: { type: DataTypes.INTEGER.UNSIGNED, primaryKey: true, autoIncrement: true },
-      userId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+      // Null once the payer's account is erased; the payment record stays.
+      userId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
 
       purpose: { type: DataTypes.ENUM("membership", "booking"), allowNull: false },
       bookingId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },

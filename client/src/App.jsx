@@ -7,7 +7,6 @@ import {
   RequireAuth,
   RequireMembership,
 } from "./components/layout/ProtectedRoute";
-import Placeholder from "./pages/Placeholder";
 import { Skeleton } from "./components/ui";
 import {
   Forbidden,
@@ -20,9 +19,7 @@ import {
  * Every route in the app.
  *
  * Pages are lazy-loaded, so the home page does not carry the weight of the
- * ones a visitor has not opened. The routes for later phases exist now,
- * pointing at a placeholder that names the phase — the navigation is then
- * real from the start and nothing dead-ends.
+ * ones a visitor has not opened.
  */
 
 const Home = lazy(() => import("./pages/Home"));
@@ -31,6 +28,40 @@ const Login = lazy(() => import("./pages/auth/Login"));
 const VerifyOtp = lazy(() => import("./pages/auth/VerifyOtp"));
 const ForgotPassword = lazy(() => import("./pages/auth/ForgotPassword"));
 const ResetPassword = lazy(() => import("./pages/auth/ResetPassword"));
+const VerifyMobile = lazy(() => import("./pages/auth/VerifyMobile"));
+
+const Discover = lazy(() => import("./pages/discover/Discover"));
+const CompanionProfile = lazy(() => import("./pages/discover/CompanionProfile"));
+const Bookings = lazy(() => import("./pages/bookings/Bookings"));
+const BookingDetail = lazy(() => import("./pages/bookings/BookingDetail"));
+const Messages = lazy(() => import("./pages/messages/Messages"));
+const MyProfile = lazy(() => import("./pages/profile/MyProfile"));
+const Settings = lazy(() => import("./pages/settings/Settings"));
+const Membership = lazy(() => import("./pages/membership/Membership"));
+const Earnings = lazy(() => import("./pages/earnings/Earnings"));
+const PaymentsHistory = lazy(() => import("./pages/payments/PaymentsHistory"));
+const Notifications = lazy(() => import("./pages/notifications/Notifications"));
+const SosShare = lazy(() => import("./pages/safety/SosShare"));
+const AdminApp = lazy(() => import("./pages/admin/AdminApp"));
+
+/* Information and legal pages live in one module; each is a named export. */
+const info = (name) => lazy(() => import("./pages/info/InfoPages").then((m) => ({ default: m[name] })));
+const HowItWorks = info("HowItWorks");
+const Pricing = info("Pricing");
+const SafetyCentre = info("SafetyCentre");
+const Help = info("Help");
+const About = info("About");
+const Blog = info("Blog");
+const Contact = info("Contact");
+const ReportIssue = info("ReportIssue");
+const Terms = info("Terms");
+const Privacy = info("Privacy");
+const Refunds = info("Refunds");
+const PaymentsInfo = info("PaymentsInfo");
+const CommunityGuidelines = info("CommunityGuidelines");
+const ChildSafety = info("ChildSafety");
+const AccountDeletion = info("AccountDeletion");
+const GrievanceOfficer = info("GrievanceOfficer");
 
 function Loading() {
   return (
@@ -43,8 +74,6 @@ function Loading() {
     </div>
   );
 }
-
-const soon = (title, phase, body) => <Placeholder title={title} phase={phase} body={body} />;
 
 export default function App() {
   return (
@@ -69,40 +98,46 @@ export default function App() {
 
               {/* ---- signed in, membership not needed yet ---- */}
               <Route element={<RequireAuth />}>
-                <Route path="/membership" element={soon("Membership and checkout", 3)} />
-                <Route path="/onboarding" element={soon("Set up your profile", 2)} />
-                <Route path="/profile" element={soon("My profile", 2)} />
-                <Route path="/settings" element={soon("Settings", 2)} />
+                <Route path="/verify-mobile" element={<VerifyMobile />} />
+                <Route path="/membership" element={<Membership />} />
+                <Route path="/onboarding" element={<Navigate to="/profile" replace />} />
+                <Route path="/profile" element={<MyProfile />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/notifications" element={<Notifications />} />
+                <Route path="/payments-history" element={<PaymentsHistory />} />
+                <Route path="/earnings" element={<Earnings />} />
               </Route>
 
               {/* ---- signed in, and paid for ---- */}
               <Route element={<RequireMembership />}>
-                <Route path="/discover" element={soon("Discover", 2)} />
-                <Route path="/bookings" element={soon("Bookings", 4)} />
-                <Route path="/messages" element={soon("Messages", 5)} />
-                <Route path="/earnings" element={soon("Earnings", 4)} />
+                <Route path="/discover" element={<Discover />} />
+                <Route path="/companions/:id" element={<CompanionProfile />} />
+                <Route path="/bookings" element={<Bookings />} />
+                <Route path="/bookings/:id" element={<BookingDetail />} />
+                <Route path="/messages" element={<Messages />} />
+                <Route path="/messages/:id" element={<Messages />} />
               </Route>
 
-              {/* ---- information and legal, Phase 7 ---- */}
-              <Route path="/how-it-works" element={soon("How it works", 7)} />
-              <Route path="/pricing" element={soon("Pricing", 7)} />
-              <Route path="/safety" element={soon("Safety centre", 7)} />
-              <Route path="/help" element={soon("Help and FAQ", 7)} />
-              <Route path="/about" element={soon("About", 7)} />
-              <Route path="/blog" element={soon("Blog", 7)} />
-              <Route path="/contact" element={soon("Contact", 7)} />
-              <Route path="/report" element={soon("Report an issue", 7)} />
-              <Route path="/terms" element={soon("Terms of use", 7)} />
-              <Route path="/privacy" element={soon("Privacy policy", 7)} />
-              <Route path="/refunds" element={soon("Refunds and cancellation", 7)} />
-              <Route path="/payments" element={soon("Payments", 7)} />
-              <Route
-                path="/community-guidelines"
-                element={soon("Community guidelines", 7)}
-              />
-              <Route path="/child-safety" element={soon("Child safety policy", 7)} />
-              <Route path="/account-deletion" element={soon("Deleting your account", 7)} />
-              <Route path="/grievance-officer" element={soon("Grievance officer", 7)} />
+              {/* ---- the emergency contact's live view, no sign-in ---- */}
+              <Route path="/sos/:token" element={<SosShare />} />
+
+              {/* ---- information and legal ---- */}
+              <Route path="/how-it-works" element={<HowItWorks />} />
+              <Route path="/pricing" element={<Pricing />} />
+              <Route path="/safety" element={<SafetyCentre />} />
+              <Route path="/help" element={<Help />} />
+              <Route path="/about" element={<About />} />
+              <Route path="/blog" element={<Blog />} />
+              <Route path="/contact" element={<Contact />} />
+              <Route path="/report" element={<ReportIssue />} />
+              <Route path="/terms" element={<Terms />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/refunds" element={<Refunds />} />
+              <Route path="/payments" element={<PaymentsInfo />} />
+              <Route path="/community-guidelines" element={<CommunityGuidelines />} />
+              <Route path="/child-safety" element={<ChildSafety />} />
+              <Route path="/account-deletion" element={<AccountDeletion />} />
+              <Route path="/grievance-officer" element={<GrievanceOfficer />} />
 
               {/* ---- system ---- */}
               <Route path="/403" element={<Forbidden />} />
@@ -111,8 +146,8 @@ export default function App() {
               <Route path="*" element={<NotFound />} />
             </Route>
 
-            {/* The admin area is its own shell with its own login, Phase 6. */}
-            <Route path="/admin/*" element={<Navigate to="/admin/login" replace />} />
+            {/* The admin area is its own shell with its own login. */}
+            <Route path="/admin/*" element={<AdminApp />} />
           </Routes>
         </Suspense>
       </AuthProvider>

@@ -17,6 +17,8 @@ module.exports = (sequelize) => {
       gender: { type: DataTypes.ENUM("female", "male", "other", "prefer_not_to_say"), allowNull: true },
       bio: { type: DataTypes.TEXT, allowNull: true },
       city: { type: DataTypes.STRING(80), allowNull: true },
+      // Neighbourhood, shown publicly ("Indiranagar"); the exact spot never is.
+      area: { type: DataTypes.STRING(80), allowNull: true },
       state: { type: DataTypes.STRING(80), allowNull: true },
       country: { type: DataTypes.STRING(80), allowNull: false, defaultValue: "India" },
 
@@ -27,8 +29,35 @@ module.exports = (sequelize) => {
       languages: { type: DataTypes.STRING(200), allowNull: true },
       occupation: { type: DataTypes.STRING(120), allowNull: true },
 
-      // Set by the photo-review queue once at least one photo is approved.
+      /* The "Verified" badge: KYC approved and the selfie matched the
+         profile photo. Set by the KYC review, never by the member. */
       isVerified: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+
+      /* Selfie / liveness check. The selfie is compared against the primary
+         photo by the KYC provider (mocked in development). */
+      selfieStatus: {
+        type: DataTypes.ENUM("none", "submitted", "approved", "rejected"),
+        allowNull: false,
+        defaultValue: "none",
+      },
+      selfiePath: { type: DataTypes.STRING(300), allowNull: true },
+      selfieMatchScore: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+
+      /* A Companion is not listed until an admin approves them.
+         Customers are "approved" from the start. */
+      approvalStatus: {
+        type: DataTypes.ENUM("draft", "pending", "approved", "rejected"),
+        allowNull: false,
+        defaultValue: "draft",
+      },
+      approvalNote: { type: DataTypes.STRING(300), allowNull: true },
+      approvedAt: { type: DataTypes.DATE, allowNull: true },
+
+      // Who gets the SOS link during a meet.
+      emergencyContactName: { type: DataTypes.STRING(120), allowNull: true },
+      emergencyContactPhone: { type: DataTypes.STRING(20), allowNull: true },
+
+      completedMeets: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
       ratingAvg: { type: DataTypes.DECIMAL(3, 2), allowNull: false, defaultValue: 0 },
       ratingCount: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
 
@@ -36,7 +65,7 @@ module.exports = (sequelize) => {
       onboardingComplete: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     },
     { tableName: "profiles",
-      indexes: [{ fields: ["city"] }, { fields: ["latitude", "longitude"] }] }
+      indexes: [{ fields: ["city"] }, { fields: ["approval_status"] }, { fields: ["latitude", "longitude"] }] }
   );
 
   return Profile;

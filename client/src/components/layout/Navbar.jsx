@@ -18,12 +18,13 @@ import { BRAND, CITY } from "../../config/brand";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
 import { Avatar, Button } from "../ui";
+import NotificationBell from "./NotificationBell";
 
 /**
  * The top bar: sticky, with the current section marked.
  *
  * A visitor sees the marketing links and a highlighted way in. A signed-in
- * member sees the app's four places, with Earnings added for Customers.
+ * member sees the app's places, with Earnings added for Companions.
  * Anything that needs a membership wears a lock rather than disappearing,
  * so nobody has to guess why a page is missing.
  */
@@ -41,13 +42,13 @@ const MEMBER_LINKS = [
 ];
 
 export default function Navbar() {
-  const { signedIn, user, isCustomer, memberActive, signOut } = useAuth();
+  const { signedIn, user, isCompanion, memberActive, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
   const links = signedIn
-    ? [...MEMBER_LINKS, ...(isCustomer ? [{ to: "/earnings", label: "Earnings", gated: true }] : [])]
+    ? [...MEMBER_LINKS, ...(isCompanion ? [{ to: "/earnings", label: "Earnings", gated: true }] : [])]
     : PUBLIC_LINKS;
 
   const leave = async () => {
@@ -78,9 +79,10 @@ export default function Navbar() {
           )}
 
           <ThemeToggle />
+          {signedIn && <NotificationBell />}
 
           {signedIn ? (
-            <AccountMenu user={user} isCustomer={isCustomer} onSignOut={leave} />
+            <AccountMenu user={user} isCompanion={isCompanion} onSignOut={leave} />
           ) : (
             <div className="hidden items-center gap-2 sm:flex">
               <Button to="/login" variant="ghost" size="sm">
@@ -144,7 +146,7 @@ function TopLink({ to, label, locked }) {
       to={locked ? "/membership" : to}
       className={({ isActive }) =>
         `rounded-full px-3.5 py-2 text-sm font-semibold transition-colors ${
-          isActive ? "bg-ink-high text-paper" : "text-muted hover:text-paper"
+          isActive ? "bg-pink-soft text-pink" : "text-muted hover:text-pink"
         }`
       }
     >
@@ -159,9 +161,17 @@ function TopLink({ to, label, locked }) {
 /** The brand mark: two linked rings, drawn rather than loaded. */
 function Mark() {
   return (
-    <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
-      <circle cx="10" cy="13" r="6.5" style={{ stroke: "var(--rose)" }} strokeWidth="2.4" />
-      <circle cx="17" cy="13" r="6.5" stroke="currentColor" strokeWidth="2.4" opacity="0.55" />
+    <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true">
+      <defs>
+        <linearGradient id="mark-grad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="var(--pink)" />
+          <stop offset="1" stopColor="var(--rose)" />
+        </linearGradient>
+      </defs>
+      <path
+        fill="url(#mark-grad)"
+        d="M12 21s-7.5-4.6-10-9.3C.3 8.4 2.1 4.5 5.8 4.1 8 3.9 9.8 5 12 7.3 14.2 5 16 3.9 18.2 4.1c3.7.4 5.5 4.3 3.8 7.6C19.5 16.4 12 21 12 21z"
+      />
     </svg>
   );
 }
@@ -184,7 +194,7 @@ function ThemeToggle() {
   );
 }
 
-function AccountMenu({ user, isCustomer, onSignOut }) {
+function AccountMenu({ user, isCompanion, onSignOut }) {
   return (
     <Dropdown align="end">
       <Dropdown.Toggle
@@ -211,11 +221,14 @@ function AccountMenu({ user, isCustomer, onSignOut }) {
         <Dropdown.Item as={Link} to="/membership">
           <FiCreditCard className="mr-2 inline" size={15} /> Membership
         </Dropdown.Item>
-        {isCustomer && (
+        {isCompanion && (
           <Dropdown.Item as={Link} to="/earnings">
             <FiCreditCard className="mr-2 inline" size={15} /> Earnings
           </Dropdown.Item>
         )}
+        <Dropdown.Item as={Link} to="/payments-history">
+          <FiCreditCard className="mr-2 inline" size={15} /> Payments &amp; invoices
+        </Dropdown.Item>
         <Dropdown.Item as={Link} to="/settings">
           <FiSettings className="mr-2 inline" size={15} /> Settings
         </Dropdown.Item>

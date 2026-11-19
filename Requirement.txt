@@ -1,0 +1,84 @@
+1. User roles
+
+Customer (person who books a friend)
+Companion/Friend (person who offers time)
+Admin (moderation, payouts, disputes)
+
+2. Auth & accounts
+
+Signup/login with email + mobile, OTP verification
+Forgot password via OTP
+Google login (optional)
+Accept Terms/Privacy at signup
+Account deletion (required by Play Store/App Store and the DPDP Act)
+
+3. Verification (most important for safety)
+
+Age check (18+) at signup
+Companion KYC: Aadhaar/PAN via DigiLocker or a provider like IDfy/Signzy
+Selfie/liveness check that matches the profile photo
+“Verified” badge on the profile
+Admin approval before a companion goes live
+
+4. Companion profiles
+
+Photos (moderated), bio, languages, interests, city/area
+Services offered (pick from categories), hourly rate
+Availability calendar
+Ratings and reviews, number of completed meets
+
+5. Search & discovery
+
+Search by city or area, with geolocation
+Filters: service type, price range, gender, age range, language, rating, available date
+Sort by rating, price, distance
+
+6. Booking flow
+
+Pick date, time slot, duration, service, and meeting place (public places only)
+Booking request → companion accepts or rejects → customer pays
+Booking statuses: pending / confirmed / completed / cancelled / disputed
+Booking history for both sides
+
+7. Payments
+
+Razorpay/PayU/Cashfree checkout (UPI, cards)
+Escrow model: hold the money and release it to the companion after the meet is completed
+Platform commission, GST invoice generation
+Cancellation and refund rules with time windows
+Companion payout dashboard + bank/UPI payout (Razorpay Route or Cashfree Payouts)
+
+8. Messaging
+
+In-app chat, opened only after a booking is confirmed
+Mask phone numbers and emails in chat, so users can’t take deals off the platform
+Report or block from chat
+
+9. Notifications
+
+Email + SMS/WhatsApp + push for booking requests, confirmations, reminders and payments
+
+10. Safety
+
+Strict platonic-only policy in the Terms, with keyword filtering in chat
+Report user, block user
+SOS button during a meet that shares live location with an emergency contact
+Check-in/check-out on meet start and end
+Public-meeting-place rule
+
+11. Reviews
+
+Two-way ratings (customer rates companion and companion rates customer), only after a completed booking
+
+12. Admin panel
+
+Approve, suspend or ban users
+KYC review queue
+Bookings, payments, refunds and disputes
+Reported content and chat review
+Commission/pricing settings, service category management
+Analytics: users, bookings, revenue by city
+
+13. Legal pages
+
+Terms, Privacy Policy, Refund Policy, Safety guidelines, Child Safety, Community guidelines, Contact/Grievance Officer (required in India under the IT Rules)

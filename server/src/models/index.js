@@ -15,7 +15,7 @@ const Photo = require("./Photo")(sequelize);
 const Interest = require("./Interest")(sequelize);
 const UserInterest = require("./UserInterest")(sequelize);
 const Preference = require("./Preference")(sequelize);
-const CustomerRate = require("./CustomerRate")(sequelize);
+const CompanionRate = require("./CompanionRate")(sequelize);
 const Plan = require("./Plan")(sequelize);
 const Subscription = require("./Subscription")(sequelize);
 const Booking = require("./Booking")(sequelize);
@@ -32,6 +32,12 @@ const Setting = require("./Setting")(sequelize);
 const AdminUser = require("./AdminUser")(sequelize);
 const AuditLog = require("./AuditLog")(sequelize);
 const RefreshToken = require("./RefreshToken")(sequelize);
+const ServiceCategory = require("./ServiceCategory")(sequelize);
+const CompanionService = require("./CompanionService")(sequelize);
+const Availability = require("./Availability")(sequelize);
+const Review = require("./Review")(sequelize);
+const PayoutAccount = require("./PayoutAccount")(sequelize);
+const SosAlert = require("./SosAlert")(sequelize);
 
 /* ---- the account and the things that describe it ---- */
 
@@ -57,10 +63,31 @@ Interest.belongsToMany(User, {
   as: "people",
 });
 
-/* ---- what a Customer charges ---- */
+/* ---- what a Companion charges ---- */
 
-User.hasMany(CustomerRate, { foreignKey: "customerId", as: "rates", onDelete: "CASCADE" });
-CustomerRate.belongsTo(User, { foreignKey: "customerId", as: "customer" });
+User.hasMany(CompanionRate, { foreignKey: "companionId", as: "rates", onDelete: "CASCADE" });
+CompanionRate.belongsTo(User, { foreignKey: "companionId", as: "companion" });
+
+/* ---- what a Companion offers, and when ---- */
+
+User.belongsToMany(ServiceCategory, {
+  through: CompanionService,
+  foreignKey: "companionId",
+  otherKey: "categoryId",
+  as: "services",
+});
+ServiceCategory.belongsToMany(User, {
+  through: CompanionService,
+  foreignKey: "categoryId",
+  otherKey: "companionId",
+  as: "companions",
+});
+
+User.hasMany(Availability, { foreignKey: "companionId", as: "availability", onDelete: "CASCADE" });
+Availability.belongsTo(User, { foreignKey: "companionId", as: "companion" });
+
+User.hasOne(PayoutAccount, { foreignKey: "companionId", as: "payoutAccount", onDelete: "CASCADE" });
+PayoutAccount.belongsTo(User, { foreignKey: "companionId", as: "companion" });
 
 /* ---- membership ---- */
 
@@ -73,10 +100,19 @@ Subscription.belongsTo(User, { foreignKey: "userId", as: "member" });
 /* ---- bookings ---- */
 
 // Two sides of one booking, so each needs its own alias.
-User.hasMany(Booking, { foreignKey: "userId", as: "bookingsMade" });
-User.hasMany(Booking, { foreignKey: "customerId", as: "bookingsReceived" });
-Booking.belongsTo(User, { foreignKey: "userId", as: "user" });
+User.hasMany(Booking, { foreignKey: "customerId", as: "bookingsMade" });
+User.hasMany(Booking, { foreignKey: "companionId", as: "bookingsReceived" });
 Booking.belongsTo(User, { foreignKey: "customerId", as: "customer" });
+Booking.belongsTo(User, { foreignKey: "companionId", as: "companion" });
+Booking.belongsTo(ServiceCategory, { foreignKey: "serviceId", as: "service" });
+
+/* ---- reviews, two-way, after a completed booking ---- */
+
+Booking.hasMany(Review, { foreignKey: "bookingId", as: "reviews", onDelete: "CASCADE" });
+Review.belongsTo(Booking, { foreignKey: "bookingId", as: "booking" });
+Review.belongsTo(User, { foreignKey: "authorId", as: "author" });
+Review.belongsTo(User, { foreignKey: "subjectId", as: "subject" });
+User.hasMany(Review, { foreignKey: "subjectId", as: "reviewsReceived" });
 
 /* ---- money ---- */
 
@@ -90,8 +126,8 @@ Payment.belongsTo(Booking, { foreignKey: "bookingId", as: "booking" });
 Subscription.hasOne(Payment, { foreignKey: "subscriptionId", as: "payment" });
 Payment.belongsTo(Subscription, { foreignKey: "subscriptionId", as: "subscription" });
 
-User.hasMany(Payout, { foreignKey: "customerId", as: "payouts", onDelete: "SET NULL" });
-Payout.belongsTo(User, { foreignKey: "customerId", as: "customer" });
+User.hasMany(Payout, { foreignKey: "companionId", as: "payouts", onDelete: "SET NULL" });
+Payout.belongsTo(User, { foreignKey: "companionId", as: "companion" });
 
 Booking.hasOne(Payout, { foreignKey: "bookingId", as: "payout" });
 Payout.belongsTo(Booking, { foreignKey: "bookingId", as: "booking" });
@@ -106,8 +142,8 @@ KycDocument.belongsTo(User, { foreignKey: "userId", as: "owner" });
 Booking.hasOne(Conversation, { foreignKey: "bookingId", as: "conversation", onDelete: "CASCADE" });
 Conversation.belongsTo(Booking, { foreignKey: "bookingId", as: "booking" });
 
-Conversation.belongsTo(User, { foreignKey: "userId", as: "user" });
 Conversation.belongsTo(User, { foreignKey: "customerId", as: "customer" });
+Conversation.belongsTo(User, { foreignKey: "companionId", as: "companion" });
 
 Conversation.hasMany(Message, { foreignKey: "conversationId", as: "messages", onDelete: "CASCADE" });
 Message.belongsTo(Conversation, { foreignKey: "conversationId", as: "conversation" });
@@ -122,6 +158,9 @@ Report.belongsTo(User, { foreignKey: "reporterId", as: "reporter" });
 Report.belongsTo(User, { foreignKey: "reportedId", as: "reported" });
 Report.belongsTo(Booking, { foreignKey: "bookingId", as: "booking" });
 Report.belongsTo(Message, { foreignKey: "messageId", as: "message" });
+
+SosAlert.belongsTo(User, { foreignKey: "userId", as: "user" });
+SosAlert.belongsTo(Booking, { foreignKey: "bookingId", as: "booking" });
 
 /* ---- housekeeping ---- */
 
@@ -144,7 +183,7 @@ module.exports = {
   Interest,
   UserInterest,
   Preference,
-  CustomerRate,
+  CompanionRate,
   Plan,
   Subscription,
   Booking,
@@ -161,4 +200,10 @@ module.exports = {
   AdminUser,
   AuditLog,
   RefreshToken,
+  ServiceCategory,
+  CompanionService,
+  Availability,
+  Review,
+  PayoutAccount,
+  SosAlert,
 };

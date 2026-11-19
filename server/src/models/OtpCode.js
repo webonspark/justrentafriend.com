@@ -17,7 +17,7 @@ module.exports = (sequelize) => {
       destination: { type: DataTypes.STRING(190), allowNull: false },
 
       purpose: {
-        type: DataTypes.ENUM("verify_email", "reset_password", "change_email", "change_mobile"),
+        type: DataTypes.ENUM("verify_email", "verify_mobile", "login_mobile", "reset_password", "change_email", "change_mobile"),
         allowNull: false,
       },
 

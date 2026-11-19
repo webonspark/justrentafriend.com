@@ -32,6 +32,13 @@ export default {
           soft: "var(--rose-soft)",
           line: "var(--rose-line)",
         },
+        pink: {
+          DEFAULT: "var(--pink)",
+          deep: "var(--pink-deep)",
+          soft: "var(--pink-soft)",
+          line: "var(--pink-line)",
+        },
+        blush: "var(--blush)",
         paper: "var(--paper)",
         muted: "var(--muted)",
         faint: "var(--faint)",

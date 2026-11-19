@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import { FiEye, FiEyeOff } from "react-icons/fi";
 
 /**
  * The pieces every page is built from.
@@ -154,6 +156,42 @@ export function Field({
           {error}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * A password input with an eye button that shows or hides what was typed.
+ * Takes the same props as Field.
+ */
+export function PasswordField({ label, id, error, hint, className = "", ...rest }) {
+  const [show, setShow] = useState(false);
+  const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
+  return (
+    <div className="mb-4">
+      <label className="k-label" htmlFor={id}>{label}</label>
+      <div className="relative">
+        <input
+          id={id}
+          type={show ? "text" : "password"}
+          className={`k-input block pr-12 ${className}`}
+          aria-invalid={error ? "true" : undefined}
+          aria-describedby={describedBy}
+          {...rest}
+        />
+        <button
+          type="button"
+          onClick={() => setShow((v) => !v)}
+          className="absolute inset-y-0 right-1.5 my-auto grid h-9 w-9 place-items-center rounded-lg text-muted transition-colors hover:text-pink"
+          style={{ background: "none", border: 0 }}
+          aria-label={show ? "Hide password" : "Show password"}
+          aria-pressed={show}
+        >
+          {show ? <FiEyeOff size={18} /> : <FiEye size={18} />}
+        </button>
+      </div>
+      {hint && !error && <p className="k-hint" id={`${id}-hint`}>{hint}</p>}
+      {error && <p className="k-wrong" id={`${id}-error`} role="alert">{error}</p>}
     </div>
   );
 }

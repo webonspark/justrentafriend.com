@@ -1,7 +1,7 @@
 const { DataTypes } = require("sequelize");
 
 /**
- * Money going out to a Customer once a booking is complete.
+ * Money going out to a Companion once a booking is complete.
  *
  * Released only after both sides mark the booking done, or after an admin
  * settles a dispute. Every payment out carries a bank reference, so it can
@@ -12,7 +12,8 @@ module.exports = (sequelize) => {
     "Payout",
     {
       id: { type: DataTypes.INTEGER.UNSIGNED, primaryKey: true, autoIncrement: true },
-      customerId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+      // Null once the Companion's account is erased; the payout record stays.
+      companionId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
       bookingId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
 
       amountPaise: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
@@ -29,7 +30,7 @@ module.exports = (sequelize) => {
       note: { type: DataTypes.STRING(300), allowNull: true },
     },
     { tableName: "payouts",
-      indexes: [{ fields: ["customer_id", "status"] }, { unique: true, fields: ["booking_id"] }] }
+      indexes: [{ fields: ["companion_id", "status"] }, { unique: true, fields: ["booking_id"] }] }
   );
 
   return Payout;

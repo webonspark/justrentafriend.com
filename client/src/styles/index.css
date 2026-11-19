@@ -152,8 +152,37 @@ a {
   }
 
   /* Phones get a bottom tab bar, so the page needs room beneath it. */
+  /* Every page sits on the home page's palette: soft pink and red light
+     in the corners, fixed so it stays put while the content scrolls. */
   .k-page {
     padding-bottom: calc(var(--tabbar-h) + 1rem);
+    background:
+      radial-gradient(42rem 26rem at 100% 0%, var(--pink-soft), transparent 65%),
+      radial-gradient(38rem 24rem at 0% 100%, var(--rose-soft), transparent 65%),
+      var(--ink);
+    background-attachment: fixed;
+  }
+
+  /* Page titles wear the brand gradient (the home hero styles its own). */
+  .k-page h1:not(.k-plain) {
+    background: linear-gradient(100deg, var(--paper) 0%, var(--blush) 35%, var(--pink) 70%, var(--rose) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  :root[data-theme="light"] .k-page h1:not(.k-plain) {
+    background-image: linear-gradient(100deg, #000 0%, var(--pink-deep) 55%, var(--rose) 100%);
+  }
+
+  /* A thin pink-to-red rule, for section breaks and panel tops. */
+  .k-glow-top { position: relative; }
+  .k-glow-top::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 3px;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--pink), var(--rose));
   }
   @media (min-width: 768px) {
     .k-page { padding-bottom: 0; }
@@ -184,14 +213,18 @@ a {
   .k-btn:active:not(:disabled) { transform: translateY(1px); }
   .k-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
+  /* The brand gradient: pink into red, with a pink glow. */
   .k-btn-primary {
     background-color: var(--rose);
+    background-image: linear-gradient(135deg, var(--pink) 0%, var(--rose) 100%);
     color: var(--on-rose);
-    box-shadow: var(--shadow-glow);
+    box-shadow: 0 12px 30px -12px var(--pink);
   }
   .k-btn-primary:hover:not(:disabled) {
-    background-color: var(--rose-deep);
+    background-image: linear-gradient(135deg, var(--pink-deep) 0%, var(--rose-deep) 100%);
     color: var(--on-rose);
+    transform: translateY(-1px);
+    box-shadow: 0 16px 36px -12px var(--rose);
   }
 
   .k-btn-outline {
@@ -200,8 +233,9 @@ a {
     color: var(--paper);
   }
   .k-btn-outline:hover:not(:disabled) {
-    border-color: var(--paper);
-    color: var(--paper);
+    border-color: var(--pink);
+    color: var(--pink);
+    background-color: var(--pink-soft);
   }
 
   .k-btn-ghost {
@@ -209,7 +243,7 @@ a {
     color: var(--muted);
     padding-inline: 0.75rem;
   }
-  .k-btn-ghost:hover:not(:disabled) { color: var(--paper); }
+  .k-btn-ghost:hover:not(:disabled) { color: var(--pink); }
 
   .k-btn-block { width: 100%; }
   .k-btn-sm { padding: 0.5rem 1rem; font-size: 0.875rem; }
@@ -233,7 +267,8 @@ a {
   }
   .k-card-link:hover {
     transform: translateY(-4px);
-    border-color: var(--rose-line);
+    border-color: var(--pink-line);
+    box-shadow: 0 20px 40px -20px var(--pink);
   }
 
   /* ---------------------- inputs ---------------------- */
@@ -261,8 +296,8 @@ a {
   .k-input::placeholder { color: var(--faint); opacity: 0.5; }
   .k-input:focus {
     outline: none;
-    border-color: var(--rose);
-    box-shadow: 0 0 0 3px var(--rose-soft);
+    border-color: var(--pink);
+    box-shadow: 0 0 0 3px var(--pink-soft);
   }
   .k-input[aria-invalid="true"] {
     border-color: var(--bad);
@@ -296,9 +331,9 @@ a {
     white-space: nowrap;
   }
   .k-badge-accent {
-    background-color: var(--rose-soft);
-    border-color: var(--rose-line);
-    color: var(--rose);
+    background-color: var(--pink-soft);
+    border-color: var(--pink-line);
+    color: var(--pink);
   }
   .k-badge-good {
     background-color: var(--good-soft);
@@ -450,4 +485,25 @@ a {
 @keyframes k-rise {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: none; }
+}
+
+/* ---- accordions (FAQ, Help) ----
+   Bootstrap's open state is blue; repaint it in the brand's pink/red. */
+html .accordion {
+  --bs-accordion-bg: transparent;
+  --bs-accordion-color: var(--paper);
+  --bs-accordion-border-color: var(--ink-line);
+  --bs-accordion-btn-color: var(--paper);
+  --bs-accordion-btn-bg: transparent;
+  --bs-accordion-active-color: var(--pink);
+  --bs-accordion-active-bg: var(--pink-soft);
+  --bs-accordion-btn-focus-box-shadow: 0 0 0 3px var(--pink-line);
+  --bs-accordion-btn-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ff4f9a' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='M2 5L8 11L14 5'/%3e%3c/svg%3e");
+  --bs-accordion-btn-active-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ff4f9a' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='M2 5L8 11L14 5'/%3e%3c/svg%3e");
+}
+.accordion-button { font-weight: 600; }
+.accordion .accordion-button::after,
+.accordion .accordion-button:not(.collapsed)::after {
+  filter: none !important;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ff4f9a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='M2 5L8 11L14 5'/%3e%3c/svg%3e") !important;
 }

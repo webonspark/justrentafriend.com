@@ -24,6 +24,11 @@ router.post("/logout", ctrl.logout);
 router.post("/forgot-password", otpLimiter, rules.emailOnlyRules, validate, ctrl.forgotPassword);
 router.post("/reset-password", otpLimiter, rules.resetRules, validate, ctrl.resetPassword);
 
+router.post("/google", loginLimiter, ctrl.google);
+router.post("/login-otp/send", otpLimiter, ctrl.sendLoginOtp);
+router.post("/login-otp/verify", loginLimiter, ctrl.loginWithOtp);
+router.post("/mobile/send", requireAuth, otpLimiter, ctrl.sendMobileOtp);
+router.post("/mobile/verify", requireAuth, otpLimiter, ctrl.verifyMobile);
 router.get("/me", requireAuth, ctrl.me);
 router.post(
   "/change-password",

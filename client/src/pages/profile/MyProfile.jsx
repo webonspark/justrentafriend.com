@@ -211,6 +211,11 @@ function Photos({ me, save, isCompanion }) {
     <Card>
       <h2 className="mb-1 text-lg">Photos</h2>
       <p className="mb-4 text-sm text-muted">Clear, recent photos of you alone. Every photo is checked by our team before it is shown.{isCompanion && " Your selfie check is matched against your main photo."}</p>
+      {me.photos.length === 0 && (
+        <p className="mb-4 rounded-xl border border-ink-line bg-ink-high p-3 text-sm">
+          <strong>Tip:</strong> {isCompanion ? "profiles with a clear, friendly photo get many more booking requests." : "Companions are more likely to accept requests from members with a photo."} Until you add one, people see a plain placeholder.
+        </p>
+      )}
       <div className="mb-4 grid grid-cols-3 gap-3">
         {me.photos.map((p) => (
           <div key={p.id} className="relative overflow-hidden rounded-xl bg-ink-high">

@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import Navbar from "./Navbar";
 import Footer from "./Footer";
 import BottomNav from "./BottomNav";
+import PhotoNudge from "./PhotoNudge";
 
 /**
  * The frame every page sits in.
@@ -26,6 +27,7 @@ export default function Layout({ bare = false }) {
       </a>
 
       <Navbar />
+      <PhotoNudge />
 
       <main id="main" tabIndex={-1} className="k-page min-h-[60vh] outline-none">
         <Outlet />

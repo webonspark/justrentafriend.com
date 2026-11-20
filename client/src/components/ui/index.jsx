@@ -297,9 +297,10 @@ export function ProfileCardSkeleton() {
 /**
  * A stand-in until real photos exist.
  *
- * The two colours come from the name, so the same person is always the same
- * shade and a grid of cards looks arranged rather than random. Generated
- * rather than shipped, so there is no placeholder image to load.
+ * A generic person silhouette for anyone without a photo yet. The two
+ * background colours come from the name, so the same person is always the
+ * same shade and a grid of cards looks arranged rather than random. Drawn
+ * inline, so there is no placeholder image to load.
  */
 export function Avatar({ name = "", size = 56, className = "" }) {
   let hash = 0;
@@ -307,27 +308,23 @@ export function Avatar({ name = "", size = 56, className = "" }) {
     hash = (hash * 31 + name.charCodeAt(i)) % 360;
   }
 
-  const initials = name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase())
-    .join("");
-
   return (
     <span
-      className={`inline-grid shrink-0 place-items-center rounded-full font-bold text-white ${className}`}
+      className={`inline-grid shrink-0 place-items-center overflow-hidden rounded-full ${className}`}
       style={{
         width: size,
         height: size,
-        fontSize: size * 0.34,
         /* Low saturation on purpose. Red is the only colour that shouts
            on this page, and a grid of loud avatars would drown the price. */
         background: `linear-gradient(135deg, hsl(${hash} 24% 38%), hsl(${(hash + 40) % 360} 28% 22%))`,
       }}
       aria-hidden="true"
     >
-      {initials}
+      {/* A generic person, shown until someone adds a photo of their own. */}
+      <svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true" style={{ display: "block" }}>
+        <circle cx="32" cy="25" r="11" fill="rgba(255,255,255,0.78)" />
+        <path d="M10 60c1.5-12.5 10.5-20 22-20s20.5 7.5 22 20z" fill="rgba(255,255,255,0.78)" />
+      </svg>
     </span>
   );
 }

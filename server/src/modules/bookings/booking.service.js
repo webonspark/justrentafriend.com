@@ -393,6 +393,7 @@ async function cancel(user, id, reason) {
   const b = await loadFor(user, id);
   if (!["pending", "accepted", "confirmed"].includes(b.status)) throw conflict("This booking can no longer be cancelled.");
   const byCompanion = user.id === b.companionId;
+  const wasCommitted = ["accepted", "confirmed"].includes(b.status);
   let refund = 0;
   let why = "Nothing had been paid.";
 
@@ -430,8 +431,35 @@ async function cancel(user, id, reason) {
     link: `/bookings/${b.id}`,
     urgent: true,
   });
+  if (byCompanion && wasCommitted) await addStrike(user.id, b.id);
   const out = bookingJson(await loadFor(user, id), user.id);
   return { ...out, refundNote: why };
+}
+
+/**
+ * A Companion who cancels after accepting gets a strike. At STRIKE_LIMIT
+ * the account is suspended and signed out; an admin can review it and
+ * reset the count from the member page.
+ */
+const STRIKE_LIMIT = 3;
+async function addStrike(companionId, bookingId) {
+  const u = await User.findByPk(companionId);
+  if (!u) return;
+  const strikes = (u.strikeCount || 0) + 1;
+  if (strikes >= STRIKE_LIMIT && u.status === "active") {
+    await u.update({ strikeCount: strikes, status: "suspended" });
+    await require("../../lib/tokens").revokeAllForUser(u.id);
+    await notify(u.id, { type: "account_suspended", title: "Your account is suspended", body: `You cancelled ${strikes} accepted bookings. Contact support to have your account reviewed.`, link: "/" });
+    logger.warn(`Companion ${u.id} suspended after ${strikes} strikes (booking ${bookingId}).`);
+  } else {
+    await u.update({ strikeCount: strikes });
+    await notify(u.id, {
+      type: "strike",
+      title: `Strike ${strikes} of ${STRIKE_LIMIT}`,
+      body: `Cancelling an accepted booking counts as a strike. At ${STRIKE_LIMIT} strikes your account is suspended.`,
+      link: `/bookings/${bookingId}`,
+    });
+  }
 }
 
 /* ------------------------------ the meet ------------------------------ */

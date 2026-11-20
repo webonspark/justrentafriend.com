@@ -29,12 +29,16 @@ const settings = require("../../lib/settings");
 const { wrap, paging } = require("../../lib/handler");
 const { requireAdmin, requireAdminRole } = require("../../middleware/auth");
 const { record, recordView } = require("../../lib/audit");
-const { publicUrl, absolute } = require("../../lib/uploads");
+const { publicUrl, absolute, remove: removeUpload } = require("../../lib/uploads");
 const { notify } = require("../../lib/notify");
 const { revokeAllForUser } = require("../../lib/tokens");
 const { badRequest, notFound, conflict } = require("../../lib/errors");
 const bookingService = require("../bookings/booking.service");
 const paymentService = require("../payments/payment.service");
+const profileService = require("../profiles/profile.service");
+const authService = require("../auth/auth.service");
+const { sendMail } = require("../../lib/mailer");
+const { sendSms } = require("../../lib/messaging");
 
 /**
  * The admin panel API. Every route needs a staff session; each section is
@@ -183,7 +187,14 @@ router.get(
   "/users/:id(\\d+)",
   ANY,
   wrap(async (req, res) => {
-    const u = await User.findByPk(req.params.id, { include: [{ model: Profile, as: "profile" }, { model: Photo, as: "photos" }] });
+    const u = await User.findByPk(req.params.id, {
+      include: [
+        { model: Profile, as: "profile" },
+        { model: Photo, as: "photos" },
+        { model: ServiceCategory, as: "services", attributes: ["id"], through: { attributes: [] } },
+        { association: "rates" },
+      ],
+    });
     if (!u) throw notFound();
     const [kyc, bookings, reportsAgainst, reportsBy, payments, payoutAccount, subs] = await Promise.all([
       KycDocument.findAll({ where: { userId: u.id }, order: [["createdAt", "DESC"]] }),
@@ -196,7 +207,22 @@ router.get(
     ]);
     await recordView(req, { action: "user.view", entityType: "user", entityId: u.id });
     res.json({
-      member: memberRow(u),
+      member: {
+        ...memberRow(u),
+        emailVerified: u.emailVerified,
+        mobileVerified: u.mobileVerified,
+        strikeCount: u.strikeCount,
+        adminNotes: u.adminNotes,
+      },
+      editable: {
+        fullName: u.fullName,
+        bio: u.profile?.bio || "",
+        city: u.profile?.city || "",
+        area: u.profile?.area || "",
+        languages: u.profile?.languages || "",
+        serviceIds: (u.services || []).map((sv) => sv.id),
+        pricePerHourPaise: (u.rates || []).find((r) => r.isCurrent)?.pricePerHourPaise ? Number((u.rates || []).find((r) => r.isCurrent).pricePerHourPaise) : null,
+      },
       profile: u.profile && {
         gender: u.profile.gender,
         bio: u.profile.bio,
@@ -237,6 +263,178 @@ router.post(
       await notify(u.id, { type: "warning", title: "A warning from our safety team", body: req.body.note || "Please review our community guidelines.", link: "/community-guidelines" });
     }
     res.json({ ok: true, status });
+  })
+);
+
+
+/* ------------------------------ editing a member ------------------------------
+ *
+ * What staff may change, and what they may not:
+ *
+ *   name, bio, city/area, languages, services, hourly rate   yes (to fix mistakes
+ *                                                           or remove bad text)
+ *   photos                     remove only — the member uploads new ones
+ *   status                     yes (see /status above)
+ *   strike count, admin notes  yes — internal, never shown to the member
+ *   email / mobile             only with re-verification: the new one must be
+ *                              confirmed by code, and every session is signed out
+ *   KYC documents              no — approve or reject only
+ *   bank / UPI details         no — only the member can change their own
+ *   password                   no — staff can only send a reset code
+ *   reviews                    hide only (see /reviews), never edit the text
+ *   payment / booking amounts  no — use refunds and dispute decisions
+ */
+
+const EDITABLE_PROFILE = ["bio", "city", "area", "languages", "serviceIds", "pricePerHourPaise"];
+
+router.put(
+  "/users/:id(\\d+)/profile",
+  MOD,
+  wrap(async (req, res) => {
+    const u = await User.findByPk(req.params.id);
+    if (!u) throw notFound();
+    const changed = [];
+
+    if (req.body.fullName !== undefined) {
+      const name = String(req.body.fullName).trim().replace(/\s+/g, " ");
+      if (name.length < 2 || name.length > 120) throw badRequest("Enter a name between 2 and 120 characters.");
+      if (name !== u.fullName) {
+        await u.update({ fullName: name });
+        changed.push("name");
+      }
+    }
+
+    const body = {};
+    for (const key of EDITABLE_PROFILE) if (req.body[key] !== undefined) body[key] = req.body[key];
+    if (u.role !== "companion") {
+      delete body.serviceIds;
+      delete body.pricePerHourPaise;
+    }
+    if (body.bio !== undefined && String(body.bio).length > 1000) throw badRequest("Keep the bio under 1,000 characters.");
+    if (Object.keys(body).length) {
+      await profileService.updateMine(u, body);
+      changed.push(...Object.keys(body).map((k) => ({ serviceIds: "services", pricePerHourPaise: "hourly rate" })[k] || k));
+    }
+
+    if (changed.length) {
+      await record(req, { action: "user.profile_edit", entityType: "user", entityId: u.id, detail: `Changed: ${changed.join(", ")}. ${req.body.note || ""}`.trim() });
+      await notify(u.id, {
+        type: "profile_edited",
+        title: "Our team updated your profile",
+        body: `We changed: ${changed.join(", ")}.${req.body.note ? ` ${String(req.body.note).slice(0, 200)}` : ""}`,
+        link: "/profile",
+      });
+    }
+    res.json({ ok: true, changed });
+  })
+);
+
+/** Removes a photo for good (fake, inappropriate, not the member). */
+router.delete(
+  "/photos/:id(\\d+)",
+  MOD,
+  wrap(async (req, res) => {
+    const photo = await Photo.findByPk(req.params.id);
+    if (!photo) throw notFound();
+    const reason = String(req.body?.reason || req.query.reason || "").trim();
+    if (!reason) throw badRequest("Give a reason — it is shown to the member.");
+    await photo.destroy();
+    removeUpload(photo.path);
+    removeUpload(photo.thumbPath);
+    if (photo.isPrimary) {
+      const next = await Photo.findOne({ where: { userId: photo.userId }, order: [["position", "ASC"]] });
+      if (next) await next.update({ isPrimary: true });
+    }
+    await record(req, { action: "photo.remove", entityType: "photo", entityId: photo.id, detail: `User ${photo.userId}. ${reason}` });
+    await notify(photo.userId, { type: "photo_removed", title: "A photo was removed from your profile", body: `${reason.slice(0, 200)} You can upload a new one from your profile.`, link: "/profile" });
+    res.json({ ok: true });
+  })
+);
+
+/** Strikes and internal notes. Never shown to the member. */
+router.put(
+  "/users/:id(\\d+)/internal",
+  MOD,
+  wrap(async (req, res) => {
+    const u = await User.findByPk(req.params.id);
+    if (!u) throw notFound();
+    const fields = {};
+    if (req.body.strikeCount !== undefined) {
+      const n = Number(req.body.strikeCount);
+      if (!Number.isInteger(n) || n < 0 || n > 20) throw badRequest("Strikes must be a whole number from 0 to 20.");
+      fields.strikeCount = n;
+    }
+    if (req.body.adminNotes !== undefined) {
+      const text = String(req.body.adminNotes || "").slice(0, 5000);
+      fields.adminNotes = text.trim() ? text : null;
+    }
+    await u.update(fields);
+    await record(req, {
+      action: "user.internal_edit",
+      entityType: "user",
+      entityId: u.id,
+      detail: [fields.strikeCount !== undefined && `strikes = ${fields.strikeCount}`, fields.adminNotes !== undefined && "notes updated"].filter(Boolean).join(", "),
+    });
+    res.json({ ok: true, strikeCount: u.strikeCount, adminNotes: u.adminNotes });
+  })
+);
+
+/**
+ * Changes the email or mobile — only with re-verification. The new address
+ * is marked unconfirmed, every session is signed out, and the member must
+ * confirm it with a code before they can use the account again. The old
+ * address is told, so a wrong change cannot go unnoticed.
+ */
+router.post(
+  "/users/:id(\\d+)/contact",
+  SUPER,
+  wrap(async (req, res) => {
+    const u = await User.findByPk(req.params.id);
+    if (!u) throw notFound();
+    const kind = req.body.kind;
+    if (!["email", "mobile"].includes(kind)) throw badRequest("Choose email or mobile.");
+    const reason = String(req.body.reason || "").trim();
+    if (!reason) throw badRequest("Record why the change was made (for example, the member's request and how you confirmed it was them).");
+
+    let value;
+    if (kind === "email") {
+      value = authService.tidyEmail(req.body.value);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) throw badRequest("Enter a valid email address.");
+    } else {
+      if (!/^(\+?\d{1,3})?[\s-]?\d{10}$/.test(String(req.body.value || "").trim())) throw badRequest("Enter a 10-digit mobile number.");
+      value = authService.tidyMobile(req.body.value);
+    }
+    if (value === u[kind]) throw badRequest(`That is already their ${kind}.`);
+    if (await User.findOne({ where: { [kind]: value, id: { [Op.ne]: u.id } } })) throw conflict(`Another account already uses that ${kind}.`);
+
+    const old = u[kind];
+    await u.update(kind === "email" ? { email: value, emailVerified: false } : { mobile: value, mobileVerified: false });
+    await revokeAllForUser(u.id);
+
+    const mask = kind === "email" ? value.replace(/^(.).*(@.*)$/, "$1•••$2") : `••••${value.slice(-4)}`;
+    const warning = `The ${kind} on your ${env.brand.name} account was changed to ${mask} by our support team. If you did not ask for this, contact ${env.brand.supportEmail} straight away.`;
+    if (kind === "email") {
+      await sendMail({ to: old, subject: `Your ${env.brand.name} email address was changed`, text: warning }).catch(() => {});
+    } else {
+      await sendSms(old, warning).catch(() => {});
+    }
+
+    await record(req, { action: `user.${kind}_change`, entityType: "user", entityId: u.id, detail: `${kind === "email" ? old : `••••${old.slice(-4)}`} → ${kind === "email" ? value : mask}. ${reason}` });
+    res.json({ ok: true, [kind]: value, needsVerification: true });
+  })
+);
+
+/** Staff cannot set a password — only send the member a reset code. */
+router.post(
+  "/users/:id(\\d+)/password-reset",
+  MOD,
+  wrap(async (req, res) => {
+    const u = await User.findByPk(req.params.id);
+    if (!u) throw notFound();
+    if (["banned", "deleted"].includes(u.status)) throw conflict("This account is closed.");
+    await authService.forgotPassword({ email: u.email });
+    await record(req, { action: "user.password_reset_sent", entityType: "user", entityId: u.id });
+    res.json({ ok: true, sentTo: u.email.replace(/^(.).*(@.*)$/, "$1•••$2") });
   })
 );
 

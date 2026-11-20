@@ -75,6 +75,12 @@ module.exports = (sequelize) => {
       lastLoginAt: { type: DataTypes.DATE, allowNull: true },
       lastLoginIp: { type: DataTypes.STRING(45), allowNull: true },
 
+      /* Admin-only. A Companion gets a strike for cancelling a booking the
+         Customer was relying on; three means suspension. Notes are internal
+         and never shown to the member. */
+      strikeCount: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+      adminNotes: { type: DataTypes.TEXT, allowNull: true },
+
       /* Deleting an account starts a 30-day grace period rather than wiping
          the row, so it can be undone and so finance records survive. */
       deletionRequestedAt: { type: DataTypes.DATE, allowNull: true },

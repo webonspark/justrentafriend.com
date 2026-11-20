@@ -281,10 +281,12 @@ function ReasonDialog({ kind, onHide, onSubmit, busy, isCustomer, status }) {
       title: "Cancel this booking?",
       body:
         status !== "confirmed"
-          ? "Nothing has been charged, so there is nothing to refund."
+          ? !isCustomer && status === "accepted"
+            ? "Nothing has been charged. Cancelling a booking you accepted counts as a strike — 3 strikes suspend your account."
+            : "Nothing has been charged, so there is nothing to refund."
           : isCustomer
             ? `Full refund if you cancel ${freeHours} hours or more before the start; ${partialPct}% inside ${freeHours} hours; none after the start.`
-            : "The Customer gets a full refund. Frequent cancellations affect your listing.",
+            : "The Customer gets a full refund, and cancelling an accepted booking counts as a strike. 3 strikes suspend your account.",
       button: "Cancel booking",
     },
     reject: { title: "Decline this request?", body: "The Customer is not charged. A short reason helps them.", button: "Decline" },

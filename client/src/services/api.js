@@ -225,6 +225,7 @@ export const adminApi = {
   get: (path) => request(`/admin${path}`),
   post: (path, body = {}) => request(`/admin${path}`, { method: "POST", body }),
   put: (path, body = {}) => request(`/admin${path}`, { method: "PUT", body }),
+  del: (path, body = {}) => request(`/admin${path}`, { method: "DELETE", body }),
   html: (path) => request(`/admin${path}`, { raw: true }),
   /** A private file (KYC, selfie) as an object URL — it needs the staff token. */
   fileUrl: async (path) => {

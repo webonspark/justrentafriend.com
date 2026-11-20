@@ -394,6 +394,8 @@ async function loginWithOtp({ mobile, code }, meta = {}) {
 }
 
 module.exports = {
+  tidyEmail,
+  tidyMobile,
   sendMobileOtp,
   verifyMobile,
   sendLoginOtp,

@@ -312,6 +312,84 @@ router.get(
   })
 );
 
+/**
+ * Photo moderation, one person at a time.
+ *
+ *   GET /photos/people?status=pending   people with photos in that state
+ *   GET /photos/people/:userId          one person's photos (every state)
+ */
+router.get(
+  "/photos/people",
+  MOD,
+  wrap(async (req, res) => {
+    const status = ["pending", "approved", "rejected"].includes(req.query.status) ? req.query.status : "pending";
+    const rows = await Photo.findAll({
+      where: { moderationStatus: status },
+      include: [{ model: User, as: "owner", attributes: ["id", "fullName", "role"], include: [{ model: Profile, as: "profile", attributes: ["area", "city", "approvalStatus"] }] }],
+      order: [["createdAt", "ASC"]],
+      limit: 1000,
+    });
+    const people = new Map();
+    for (const p of rows) {
+      if (!p.owner) continue;
+      const entry = people.get(p.owner.id) || {
+        userId: p.owner.id,
+        name: p.owner.fullName,
+        role: p.owner.role,
+        area: [p.owner.profile?.area, p.owner.profile?.city].filter(Boolean).join(", "),
+        profileStatus: p.owner.profile?.approvalStatus || null,
+        count: 0,
+        firstAt: p.createdAt,
+        cover: publicUrl(p.thumbPath),
+      };
+      entry.count += 1;
+      people.set(p.owner.id, entry);
+    }
+    // Longest-waiting first.
+    res.json({ status, people: [...people.values()].sort((a, b) => new Date(a.firstAt) - new Date(b.firstAt)) });
+  })
+);
+
+router.get(
+  "/photos/people/:userId(\\d+)",
+  MOD,
+  wrap(async (req, res) => {
+    const u = await User.findByPk(req.params.userId, {
+      attributes: ["id", "fullName", "role", "dateOfBirth", "kycStatus"],
+      include: [
+        { model: Profile, as: "profile", attributes: ["area", "city", "bio", "approvalStatus", "selfieStatus"] },
+        { model: Photo, as: "photos" },
+      ],
+    });
+    if (!u) throw notFound();
+    const order = { pending: 0, rejected: 1, approved: 2 };
+    res.json({
+      person: {
+        userId: u.id,
+        name: u.fullName,
+        role: u.role,
+        age: u.age(),
+        area: [u.profile?.area, u.profile?.city].filter(Boolean).join(", "),
+        bio: u.profile?.bio || "",
+        profileStatus: u.profile?.approvalStatus || null,
+        kycStatus: u.kycStatus,
+        selfieStatus: u.profile?.selfieStatus || null,
+      },
+      photos: u.photos
+        .sort((a, b) => order[a.moderationStatus] - order[b.moderationStatus] || a.position - b.position)
+        .map((p) => ({
+          id: p.id,
+          url: publicUrl(p.path),
+          thumbUrl: publicUrl(p.thumbPath),
+          status: p.moderationStatus,
+          isPrimary: p.isPrimary,
+          rejectionReason: p.rejectionReason,
+          createdAt: p.createdAt,
+        })),
+    });
+  })
+);
+
 router.post(
   "/photos/:id(\\d+)",
   MOD,

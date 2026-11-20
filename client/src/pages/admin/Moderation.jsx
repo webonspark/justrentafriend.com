@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { Modal } from "react-bootstrap";
 import { adminApi } from "../../services/api";
 import { dateOnly, dateTime } from "../../lib/format";
 import { Alert, Badge, Button, Card } from "../../components/ui";
@@ -203,53 +204,176 @@ export function Kyc() {
 
 /* ------------------------------ photos ------------------------------ */
 
+/**
+ * Photo moderation, one person at a time: a list of people with photos in
+ * the chosen state; clicking one opens all of their photos to approve or
+ * reject one by one.
+ */
 export function Photos() {
   const [status, setStatus] = useState("pending");
-  const state = useLoad(() => adminApi.get(`/photos?status=${status}`), [status]);
-  const { ask, modal } = useConfirm();
+  const state = useLoad(() => adminApi.get(`/photos/people?status=${status}`), [status]);
+  const [openId, setOpenId] = useState(null);
+  const people = state.data?.people || [];
 
-  const approve = (p) => adminApi.post(`/photos/${p.id}`, { decision: "approve" }).then(() => state.reload());
-  const reject = (p) =>
-    ask({
-      title: "Reject this photo?",
-      confirmLabel: "Reject",
-      noteLabel: "Reason (shown to the member)",
-      requireNote: true,
-      onConfirm: async ({ note }) => {
-        await adminApi.post(`/photos/${p.id}`, { decision: "reject", reason: note });
-        state.reload();
-      },
-    });
+  const next = () => {
+    const i = people.findIndex((p) => p.userId === openId);
+    const after = people.slice(i + 1).find((p) => p.userId !== openId);
+    setOpenId(after ? after.userId : null);
+  };
 
   return (
     <>
-      {modal}
-      <PageHead title="Photo moderation" sub="No nudity, no minors, no contact details, must show the member's face.">
+      <PageHead title="Photo moderation" sub="Click a person to see all their photos. No nudity, no minors, no contact details, must show the member's face.">
         <Select label="Status" value={status} onChange={setStatus} options={[["pending", "Waiting"], ["approved", "Approved"], ["rejected", "Rejected"]]} />
       </PageHead>
-      <Loader state={state} empty={state.data?.photos.length === 0} emptyTitle="No photos here">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-          {state.data?.photos.map((p) => (
-            <Card key={p.id} pad={false} className="overflow-hidden">
-              <a href={p.url} target="_blank" rel="noreferrer">
-                <img src={p.thumbUrl} alt="" className="aspect-square w-full object-cover" />
-              </a>
-              <div className="p-3">
-                <p className="mb-2 truncate text-xs">
-                  <Link to={`/admin/members/${p.owner?.id}`}>{p.owner?.name}</Link> · {p.owner?.role}
-                </p>
-                {status === "pending" && (
-                  <div className="flex gap-1">
-                    <Button size="sm" onClick={() => approve(p)}>Approve</Button>
-                    <Button size="sm" variant="outline" onClick={() => reject(p)}>Reject</Button>
-                  </div>
-                )}
-              </div>
-            </Card>
+      <Loader state={state} empty={people.length === 0} emptyTitle={status === "pending" ? "No photos waiting" : "No one here"}>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {people.map((p) => (
+            <button
+              key={p.userId}
+              type="button"
+              onClick={() => setOpenId(p.userId)}
+              className="k-card k-card-link flex items-center gap-3 text-left"
+            >
+              <img src={p.cover} alt="" className="h-16 w-16 shrink-0 rounded-xl object-cover" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold">{p.name}</span>
+                <span className="block truncate text-xs text-muted">{p.role}{p.area ? ` · ${p.area}` : ""}</span>
+                <span className="block text-xs text-muted">Since {dateOnly(p.firstAt)}</span>
+              </span>
+              <Badge tone={status === "pending" ? "warn" : "plain"}>
+                {p.count} {status === "pending" ? "waiting" : status}
+              </Badge>
+            </button>
           ))}
         </div>
       </Loader>
+      {openId && (
+        <PersonPhotos
+          userId={openId}
+          hasNext={people.findIndex((p) => p.userId === openId) < people.length - 1}
+          onNext={next}
+          onClose={() => setOpenId(null)}
+          onChanged={() => state.reload()}
+        />
+      )}
     </>
+  );
+}
+
+/** One person's photos, in a pop-up, to approve or reject one by one. */
+function PersonPhotos({ userId, hasNext, onNext, onClose, onChanged }) {
+  const state = useLoad(() => adminApi.get(`/photos/people/${userId}`), [userId]);
+  const [busy, setBusy] = useState(null);
+  const [rejecting, setRejecting] = useState(null); // photo id
+  const [reason, setReason] = useState("");
+  const [problem, setProblem] = useState("");
+
+  const decide = async (photo, decision, why) => {
+    setBusy(photo.id);
+    setProblem("");
+    try {
+      await adminApi.post(`/photos/${photo.id}`, decision === "approve" ? { decision } : { decision, reason: why });
+      setRejecting(null);
+      setReason("");
+      await state.reload();
+      onChanged();
+    } catch (e) {
+      setProblem(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const approveAll = async () => {
+    const waiting = (state.data?.photos || []).filter((p) => p.status === "pending");
+    setBusy("all");
+    setProblem("");
+    try {
+      for (const p of waiting) await adminApi.post(`/photos/${p.id}`, { decision: "approve" });
+      await state.reload();
+      onChanged();
+    } catch (e) {
+      setProblem(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const person = state.data?.person;
+  const photos = state.data?.photos || [];
+  const waiting = photos.filter((p) => p.status === "pending").length;
+
+  return (
+    <Modal show onHide={busy ? undefined : onClose} size="xl" centered scrollable>
+      <Modal.Header closeButton={!busy}>
+        <Modal.Title>
+          {person ? (
+            <>
+              {person.name} <span className="text-base font-normal text-muted">· {person.role}{person.age ? `, ${person.age}` : ""}{person.area ? ` · ${person.area}` : ""}</span>
+            </>
+          ) : "Photos"}
+        </Modal.Title>
+      </Modal.Header>
+      <Modal.Body>
+        <Loader state={state} empty={photos.length === 0} emptyTitle="No photos">
+          {person && (
+            <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
+              {person.profileStatus && <span>Profile <StatusBadge value={person.profileStatus} /></span>}
+              {person.role === "companion" && <span>KYC <StatusBadge value={person.kycStatus} /></span>}
+              {person.role === "companion" && person.selfieStatus && <span>Selfie <StatusBadge value={person.selfieStatus} /></span>}
+              <Link to={`/admin/members/${person.userId}`} className="ml-auto" onClick={onClose}>Open member →</Link>
+            </div>
+          )}
+          {person?.bio && <p className="mb-4 text-sm text-muted">{person.bio}</p>}
+          <Alert>{problem}</Alert>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {photos.map((p) => (
+              <Card key={p.id} pad={false} className="overflow-hidden">
+                <a href={p.url} target="_blank" rel="noreferrer" title="Open full size">
+                  <img src={p.url} alt="" className="aspect-[4/5] w-full object-cover" />
+                </a>
+                <div className="space-y-2 p-3">
+                  <div className="flex items-center gap-2 text-xs">
+                    <StatusBadge value={p.status} />
+                    {p.isPrimary && <Badge tone="accent">Main photo</Badge>}
+                    <span className="ml-auto text-muted">{dateOnly(p.createdAt)}</span>
+                  </div>
+                  {p.status === "rejected" && p.rejectionReason && <p className="m-0 text-xs text-muted">Reason: {p.rejectionReason}</p>}
+
+                  {rejecting === p.id ? (
+                    <div className="space-y-2">
+                      <input
+                        className="k-input"
+                        autoFocus
+                        placeholder="Reason (shown to the member)"
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        aria-label="Reason for rejecting"
+                      />
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="outline" loading={busy === p.id} disabled={!reason.trim()} onClick={() => decide(p, "reject", reason.trim())}>Confirm reject</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setRejecting(null); setReason(""); }}>Back</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex gap-1">
+                      {p.status !== "approved" && <Button size="sm" loading={busy === p.id} disabled={Boolean(busy)} onClick={() => decide(p, "approve")}>Approve</Button>}
+                      {p.status !== "rejected" && <Button size="sm" variant="outline" disabled={Boolean(busy)} onClick={() => { setRejecting(p.id); setReason(""); }}>Reject</Button>}
+                    </div>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </div>
+        </Loader>
+      </Modal.Body>
+      <Modal.Footer>
+        <span className="mr-auto text-sm text-muted">{waiting ? `${waiting} waiting` : "Nothing waiting for this person"}</span>
+        {waiting > 1 && <Button variant="outline" loading={busy === "all"} disabled={Boolean(busy)} onClick={approveAll}>Approve all {waiting} waiting</Button>}
+        {hasNext ? <Button disabled={Boolean(busy)} onClick={onNext}>Next person →</Button> : <Button variant="ghost" onClick={onClose}>Done</Button>}
+      </Modal.Footer>
+    </Modal>
   );
 }
 

@@ -12,8 +12,9 @@ const { requireAuth, requireActiveMembership } = require("../../middleware/auth"
  *   POST /bookings/:id/reject              Companion
  *   POST /bookings/:id/pay                 Customer → gateway order
  *   POST /bookings/:id/cancel              either side, refund by the rules
- *   POST /bookings/:id/check-in            either side, at the meet
- *   POST /bookings/:id/complete            check-out / it happened
+ *   POST /bookings/:id/check-in            either side, at the meet (safety)
+ *   POST /bookings/:id/start   { code }    Companion enters the Customer's start code
+ *   POST /bookings/:id/complete            either side ends the meet
  *   POST /bookings/:id/dispute             either side
  *   POST /bookings/:id/review              either side, after completion
  */
@@ -29,6 +30,7 @@ router.post("/:id(\\d+)/reject", wrap(async (req, res) => res.json(await service
 router.post("/:id(\\d+)/pay", wrap(async (req, res) => res.json(await service.startPayment(req.user, req.params.id))));
 router.post("/:id(\\d+)/cancel", wrap(async (req, res) => res.json(await service.cancel(req.user, req.params.id, req.body.reason))));
 router.post("/:id(\\d+)/check-in", wrap(async (req, res) => res.json(await service.checkIn(req.user, req.params.id))));
+router.post("/:id(\\d+)/start", wrap(async (req, res) => res.json(await service.startMeet(req.user, req.params.id, req.body.code))));
 router.post("/:id(\\d+)/complete", wrap(async (req, res) => res.json(await service.complete(req.user, req.params.id))));
 router.post("/:id(\\d+)/dispute", wrap(async (req, res) => res.json(await service.dispute(req.user, req.params.id, req.body.reason))));
 router.post("/:id(\\d+)/review", wrap(async (req, res) => res.json(await service.review(req.user, req.params.id, req.body))));

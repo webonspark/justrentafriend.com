@@ -35,6 +35,7 @@ const sharp = require("sharp");
 const { savePhoto, savePrivate } = require("../lib/uploads");
 const { splitCommission, bookingAmount } = require("../lib/money");
 const { logger } = require("../lib/logger");
+const settings = require("../lib/settings");
 
 /**
  * Enough data to open every page and see something real.
@@ -122,27 +123,8 @@ const emailFor = (name) => `${name.toLowerCase().replace(/[^a-z]+/g, ".")}@examp
 const mobileFor = (i) => `+9198${String(45000000 + i * 13717).slice(0, 8)}`;
 
 async function seedSettings() {
-  const rows = [
-    ["commission_pct", env.money.commissionPct, "Commission on every booking (%)", "money"],
-    ["gst_pct", env.money.gstPct, "GST on membership (%)", "money"],
-    ["gst_on_commission", false, "Charge GST on the commission too", "money"],
-    ["min_price_per_hour_paise", env.money.minPricePerHour, "Lowest price a Companion may set", "money"],
-    ["max_price_per_hour_paise", env.money.maxPricePerHour, "Highest price a Companion may set", "money"],
-    ["cancellation_free_hours", 24, "Free cancellation up to this many hours before", "bookings"],
-    ["cancellation_partial_pct", 50, "Refund when cancelling inside that window (%)", "bookings"],
-    ["launch_city", env.brand.city, "The city this is open in", "general"],
-    ["company_legal_name", `${env.brand.name} Technologies Pvt Ltd`, "Legal name on invoices", "company"],
-    ["company_gstin", "29AAAAA0000A1Z5", "GSTIN on invoices (replace before launch)", "company"],
-    ["company_address", `${env.brand.city}, Karnataka, India`, "Registered address on invoices", "company"],
-    ["grievance_officer_name", "Grievance Officer", "Grievance Officer's name (IT Rules 2021)", "company"],
-    ["grievance_officer_email", env.brand.grievanceEmail, "Grievance Officer's email", "company"],
-    ["maintenance_mode", false, "Show the maintenance page to everyone", "general"],
-  ];
-
-  for (const [key, value, label, group] of rows) {
-    await Setting.findOrCreate({ where: { key }, defaults: { key, value, label, group } });
-  }
-  logger.info(`${rows.length} settings ready.`);
+  const added = await settings.ensureDefaults();
+  logger.info(`Settings ready (${added.length} added).`);
 }
 
 async function seedPlans() {

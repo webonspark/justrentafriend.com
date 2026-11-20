@@ -1,4 +1,5 @@
 const { Setting } = require("../models");
+const env = require("../config/env");
 
 /**
  * Admin-editable settings, read through a short cache.
@@ -30,4 +31,36 @@ function clear() {
   cache = null;
 }
 
-module.exports = { all, get, clear };
+/** Every setting the app knows, with its starting value: [key, value, label, group]. */
+function defaults() {
+  return [
+    ["commission_pct", env.money.commissionPct, "Commission on every booking (%) — e.g. 20 means the Companion gets 80%", "money"],
+    ["gst_pct", env.money.gstPct, "GST on membership (%)", "money"],
+    ["gst_on_commission", false, "Charge GST on the commission too", "money"],
+    ["payout_auto_release", false, "Pay Companions automatically when the 24-hour complaint window ends (off: an admin releases each payout)", "money"],
+    ["min_price_per_hour_paise", env.money.minPricePerHour, "Lowest price a Companion may set", "money"],
+    ["max_price_per_hour_paise", env.money.maxPricePerHour, "Highest price a Companion may set", "money"],
+    ["cancellation_free_hours", 24, "Free cancellation up to this many hours before", "bookings"],
+    ["cancellation_partial_pct", 50, "Refund when cancelling inside that window (%)", "bookings"],
+    ["launch_city", env.brand.city, "The city this is open in", "general"],
+    ["company_legal_name", `${env.brand.name} Technologies Pvt Ltd`, "Legal name on invoices", "company"],
+    ["company_gstin", "29AAAAA0000A1Z5", "GSTIN on invoices (replace before launch)", "company"],
+    ["company_address", `${env.brand.city}, Karnataka, India`, "Registered address on invoices", "company"],
+    ["grievance_officer_name", "Grievance Officer", "Grievance Officer's name (IT Rules 2021)", "company"],
+    ["grievance_officer_email", env.brand.grievanceEmail, "Grievance Officer's email", "company"],
+    ["maintenance_mode", false, "Show the maintenance page to everyone", "general"],
+  ];
+}
+
+/** Adds any setting that is missing. Never changes a value already saved. */
+async function ensureDefaults() {
+  const added = [];
+  for (const [key, value, label, group] of defaults()) {
+    const [, made] = await Setting.findOrCreate({ where: { key }, defaults: { key, value, label, group } });
+    if (made) added.push(key);
+  }
+  clear();
+  return added;
+}
+
+module.exports = { all, get, clear, defaults, ensureDefaults };

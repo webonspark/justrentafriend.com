@@ -494,9 +494,10 @@ router.get(
 
 /**
  * Settles a dispute:
- *   release       the meet happened → complete and pay the Companion
+ *   release       the meet happened → pay the Companion now
  *   refund_full   → refund the Customer in full, no payout
- *   refund_partial (refundPct) → refund part, pay the Companion the rest
+ *   refund_partial (refundPct) → split: refund part, pay the Companion the rest
+ *                                 (less the platform's commission)
  */
 router.post(
   "/bookings/:id(\\d+)/resolve",
@@ -504,7 +505,8 @@ router.post(
   wrap(async (req, res) => {
     const b = await Booking.findByPk(req.params.id);
     if (!b) throw notFound();
-    if (!["disputed", "confirmed"].includes(b.status)) throw conflict("Only a confirmed or disputed booking can be settled here.");
+    const settleable = ["disputed", "confirmed", "in_progress"].includes(b.status) || (b.status === "completed" && !b.payoutReleasedAt);
+    if (!settleable) throw conflict("This booking has already been settled.");
     const outcome = req.body.outcome;
     const note = String(req.body.note || "").slice(0, 500);
     const payment = await Payment.findOne({ where: { bookingId: b.id, status: { [Op.in]: ["paid", "refunded"] } } });
@@ -513,6 +515,7 @@ router.post(
       await b.update({ disputeResolution: note || "Released to the Companion" });
       await Payout.update({ status: "pending", note: null }, { where: { bookingId: b.id, status: "on_hold" } });
       await bookingService.finish(b, "admin released");
+      await bookingService.releasePayout(b.id);
     } else if (outcome === "refund_full" || outcome === "refund_partial") {
       const pct = outcome === "refund_full" ? 100 : Math.min(Math.max(Number(req.body.refundPct) || 0, 1), 99);
       const refunded = payment ? await bookingService.refundPayment(payment, Math.round((money(payment.totalPaise) * pct) / 100)) : 0;
@@ -545,7 +548,7 @@ router.post(
   wrap(async (req, res) => {
     const b = await Booking.findByPk(req.params.id);
     if (!b) throw notFound();
-    if (!["pending", "accepted", "confirmed", "disputed"].includes(b.status)) throw conflict("This booking cannot be cancelled.");
+    if (!["pending", "accepted", "confirmed", "in_progress", "disputed"].includes(b.status)) throw conflict("This booking cannot be cancelled.");
     const payment = await Payment.findOne({ where: { bookingId: b.id, status: "paid" } });
     const refunded = payment ? await bookingService.refundPayment(payment, money(payment.totalPaise)) : 0;
     await b.update({ status: "cancelled", cancelledAt: new Date(), cancelReason: req.body.reason || "Cancelled by the platform", refundPaise: refunded });

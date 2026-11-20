@@ -68,7 +68,7 @@ const env = {
   },
 
   money: {
-    commissionPct: int(process.env.DEFAULT_COMMISSION_PCT, 18),
+    commissionPct: int(process.env.DEFAULT_COMMISSION_PCT, 20),
     gstPct: int(process.env.DEFAULT_GST_PCT, 18),
     minPricePerHour: int(process.env.MIN_PRICE_PER_HOUR, 50000),
     maxPricePerHour: int(process.env.MAX_PRICE_PER_HOUR, 1000000),
@@ -93,6 +93,10 @@ if (isProd) {
   if (!process.env.JWT_REFRESH_SECRET) missing.push("JWT_REFRESH_SECRET");
   if (env.auth.accessSecret === env.auth.refreshSecret) {
     missing.push("JWT_REFRESH_SECRET (must differ from JWT_ACCESS_SECRET)");
+  }
+  if (env.payments.gateway === "razorpay") {
+    if (!env.payments.razorpayKeyId) missing.push("RAZORPAY_KEY_ID");
+    if (!env.payments.razorpayKeySecret) missing.push("RAZORPAY_KEY_SECRET");
   }
   if (missing.length) {
     throw new Error(`Cannot start in production without: ${missing.join(", ")}`);

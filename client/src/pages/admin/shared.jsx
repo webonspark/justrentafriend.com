@@ -112,7 +112,7 @@ export function AdminTable({ children }) {
 
 const TONES = {
   active: "good", approved: "good", paid: "good", completed: "good", confirmed: "good", actioned: "good", resolved: "good",
-  pending: "warn", submitted: "warn", reviewing: "warn", on_hold: "warn", disputed: "warn", warned: "warn", accepted: "accent", open: "warn",
+  pending: "warn", submitted: "warn", reviewing: "warn", on_hold: "warn", disputed: "warn", warned: "warn", accepted: "accent", open: "warn", in_progress: "accent",
   suspended: "accent", banned: "accent", rejected: "accent", failed: "accent", urgent: "accent", high: "warn",
 };
 

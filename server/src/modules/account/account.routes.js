@@ -54,7 +54,7 @@ router.delete(
     const live = await Booking.count({
       where: {
         [Op.or]: [{ customerId: req.user.id }, { companionId: req.user.id }],
-        status: { [Op.in]: ["confirmed", "disputed"] },
+        status: { [Op.in]: ["confirmed", "in_progress", "disputed"] },
       },
     });
     if (live) throw conflict("You have a confirmed or disputed booking. Finish or cancel it before deleting your account.");

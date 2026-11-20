@@ -122,6 +122,7 @@ async function verifyAndApply(user, { paymentId, gatewayPaymentId, signature }) 
     await payment.update({ status: "failed", failureReason: "Signature did not verify" });
     throw badRequest("The payment could not be verified. If money left your account it will be refunded automatically.");
   }
+  await gateway.ensureCaptured({ paymentId: gatewayPaymentId, amountPaise: payment.totalPaise });
   await apply(payment, { gatewayPaymentId, signature });
   return summary(await payment.reload());
 }
@@ -168,8 +169,10 @@ async function apply(payment, { gatewayPaymentId, signature }) {
 /** Razorpay webhook: payment.captured → apply. Signature-checked. */
 async function webhook(rawBody, signatureHeader) {
   if (gateway.gateway() !== "razorpay") return { ignored: true };
-  const expected = crypto.createHmac("sha256", env.payments.razorpayWebhookSecret || "").update(rawBody).digest("hex");
-  if (expected !== signatureHeader) throw forbidden("Bad webhook signature.");
+  if (!env.payments.razorpayWebhookSecret) throw forbidden("Webhooks are not set up (RAZORPAY_WEBHOOK_SECRET is empty).");
+  const expected = Buffer.from(crypto.createHmac("sha256", env.payments.razorpayWebhookSecret).update(rawBody).digest("hex"));
+  const given = Buffer.from(String(signatureHeader || ""));
+  if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) throw forbidden("Bad webhook signature.");
   const event = JSON.parse(rawBody.toString("utf8"));
   if (event.event !== "payment.captured") return { ignored: true };
   const entity = event.payload.payment.entity;

@@ -37,6 +37,7 @@ export const STATUS = {
   accepted: { label: "Accepted · awaiting payment", tone: "accent" },
   rejected: { label: "Declined", tone: "plain" },
   confirmed: { label: "Confirmed", tone: "good" },
+  in_progress: { label: "Meet in progress", tone: "accent" },
   completed: { label: "Completed", tone: "good" },
   cancelled: { label: "Cancelled", tone: "plain" },
   disputed: { label: "Disputed", tone: "warn" },

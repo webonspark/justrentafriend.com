@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { Modal } from "react-bootstrap";
-import { FiCheck, FiFlag, FiLogIn, FiMapPin, FiMessageCircle, FiX } from "react-icons/fi";
+import { FiCheck, FiFlag, FiMapPin, FiMessageCircle, FiPlay, FiX } from "react-icons/fi";
 import { api, ApiError } from "../../services/api";
 import { STATUS, dateTime, inr, timeOnly } from "../../lib/format";
 import { Alert, Avatar, Badge, Button, Card, EmptyState, Field, Skeleton } from "../../components/ui";
@@ -16,9 +16,10 @@ import { useSiteConfig } from "../info/InfoLayout";
  *   Companion, pending      accept / reject
  *   Customer, accepted      pay (escrow)
  *   either, before the meet cancel (refund by the time rules)
- *   either, at the meet     check in, SOS
- *   after it starts         complete (check out), dispute
- *   completed               review
+ *   Customer, confirmed     shows the 4-digit start code at the meet
+ *   Companion, confirmed    enters that code → meet in progress
+ *   either, in progress     end the meet, SOS
+ *   completed               review; raise a problem within 24 hours
  */
 export default function BookingDetail() {
   const { id } = useParams();
@@ -72,11 +73,9 @@ export default function BookingDetail() {
   const now = Date.now();
   const start = new Date(b.startAt).getTime();
   const end = new Date(b.endAt).getTime();
-  const myCheckIn = isCustomer ? b.customerCheckInAt : b.companionCheckInAt;
-  const theirCheckIn = isCustomer ? b.companionCheckInAt : b.customerCheckInAt;
-  const myComplete = isCustomer ? b.customerCompletedAt : b.companionCompletedAt;
-  const canCheckIn = b.status === "confirmed" && !myCheckIn && now >= start - 30 * 60000 && now <= end + 60 * 60000;
-  const meetLive = b.status === "confirmed" && now >= start - 60 * 60000 && now <= end + 3 * 3600e3;
+  const canStart = b.status === "confirmed" && now >= start - 30 * 60000 && now <= end;
+  const meetLive = b.status === "in_progress" || (b.status === "confirmed" && now >= start - 60 * 60000 && now <= end + 3 * 3600e3);
+  const first = other.name.split(" ")[0];
 
   return (
     <div className="k-wrap py-8 lg:py-12">
@@ -114,18 +113,36 @@ export default function BookingDetail() {
           {b.status === "confirmed" && (
             <Card>
               <h2 className="mb-3 text-lg">At the meet</h2>
-              <Row label="You" value={myCheckIn ? `Checked in at ${timeOnly(myCheckIn)}` : "Not checked in"} />
-              <Row label={other.name.split(" ")[0]} value={theirCheckIn ? `Checked in at ${timeOnly(theirCheckIn)}` : "Not checked in"} />
-              <div className="mt-4 flex flex-wrap gap-2">
-                {canCheckIn && <Button loading={busy === "check-in"} onClick={() => act("check-in", {}, () => "You're checked in. Have a good time — the SOS button is here if you need it.")}><FiLogIn /> Check in</Button>}
-                {now >= start && !myComplete && (
-                  <Button variant="outline" loading={busy === "complete"} onClick={() => act("complete", {}, () => (isCustomer ? "Thanks! The payout has been released to your Companion." : "Thanks! The Customer has been asked to confirm."))}>
-                    <FiCheck /> {isCustomer ? "It happened — check out" : "Check out"}
-                  </Button>
-                )}
-                {meetLive && <SosButton bookingId={b.id} />}
+              {isCustomer ? (
+                <>
+                  <p className="text-sm text-muted">When you meet {first}, show them this code. They enter it to start the meet — it proves you both turned up. Don't share it before you meet.</p>
+                  <p className="my-3 text-center font-mono text-4xl font-bold tracking-[0.4em]" aria-label="Your start code">{b.startCode || "····"}</p>
+                </>
+              ) : (
+                <StartCodeForm
+                  name={first}
+                  disabled={!canStart}
+                  busy={busy === "start"}
+                  onSubmit={(code) => act("start", { code }, () => "Meet started. Have a good time — the SOS button is here if you need it.")}
+                />
+              )}
+              <div className="mt-4 flex flex-wrap gap-2">{meetLive && <SosButton bookingId={b.id} />}</div>
+              {!canStart && <p className="mb-0 mt-3 text-xs text-muted">{isCustomer ? "The SOS button appears shortly before the start time." : "You can enter the code from 30 minutes before the start time."}</p>}
+            </Card>
+          )}
+
+          {b.status === "in_progress" && (
+            <Card>
+              <h2 className="mb-3 text-lg">Meet in progress</h2>
+              <Row label="Started" value={timeOnly(b.startedAt)} />
+              <Row label="Booked until" value={timeOnly(b.endAt)} />
+              <p className="mt-3 text-xs text-muted">The meet ends by itself at the booked time. End it earlier if you're done.</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button variant="outline" loading={busy === "complete"} onClick={() => act("complete", {}, () => "Meet ended. Thanks! Leave a review below.")}>
+                  <FiCheck /> End meet
+                </Button>
+                <SosButton bookingId={b.id} />
               </div>
-              {!meetLive && <p className="mb-0 mt-3 text-xs text-muted">Check-in and the SOS button open shortly before the start time.</p>}
             </Card>
           )}
 
@@ -158,8 +175,12 @@ export default function BookingDetail() {
             )}
             {b.refundPaise ? <Row label="Refunded" value={inr(b.refundPaise)} /> : null}
             <p className="mb-0 mt-2 text-xs text-muted">
-              {b.status === "confirmed" && "Paid and held safely until after the meet."}
-              {b.status === "completed" && (b.payoutReleasedAt ? "Released to the Companion." : "Completed — payout being processed.")}
+              {["confirmed", "in_progress"].includes(b.status) && "Paid and held safely by us until after the meet."}
+              {b.status === "completed" && (b.payoutReleasedAt
+                ? "Released to the Companion."
+                : b.complaintWindowEndsAt && now < new Date(b.complaintWindowEndsAt).getTime()
+                  ? `Held until ${dateTime(b.complaintWindowEndsAt)} in case there's a problem, then paid to the Companion.`
+                  : "Complaint window over — payout being sent to the Companion.")}
               {b.status === "disputed" && "On hold while our team reviews the problem."}
               {["pending", "accepted"].includes(b.status) && "Nothing has been charged yet."}
             </p>
@@ -177,9 +198,9 @@ export default function BookingDetail() {
             {b.status === "accepted" && !isCustomer && <p className="m-0 text-sm text-muted">Waiting for the Customer to pay.</p>}
             {b.conversationId && <Button block variant="outline" to={`/messages/${b.conversationId}`}><FiMessageCircle /> Chat</Button>}
             {["pending", "accepted", "confirmed"].includes(b.status) && <Button block variant="ghost" onClick={() => setDialog("cancel")}>Cancel booking</Button>}
-            {(b.status === "confirmed" && now >= start) || (b.status === "completed" && !b.payoutReleasedAt) ? (
+            {b.canDispute && (
               <Button block variant="ghost" onClick={() => setDialog("dispute")}>Report a problem with this meet</Button>
-            ) : null}
+            )}
             <Button block variant="ghost" onClick={() => setReporting(true)}><FiFlag /> Report {other.name.split(" ")[0]}</Button>
           </Card>
         </aside>
@@ -210,6 +231,35 @@ export default function BookingDetail() {
         />
       )}
     </div>
+  );
+}
+
+function StartCodeForm({ name, disabled, busy, onSubmit }) {
+  const [code, setCode] = useState("");
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (code.length === 4) onSubmit(code);
+      }}
+    >
+      <p className="text-sm text-muted">When you meet {name}, ask for their 4-digit start code and enter it here. Your payout depends on it — it proves the meet happened.</p>
+      <div className="flex items-end gap-2">
+        <div className="flex-1">
+          <Field
+            label="Start code"
+            id="start-code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={4}
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            disabled={disabled}
+          />
+        </div>
+        <Button type="submit" loading={busy} disabled={disabled || code.length !== 4}><FiPlay /> Start meet</Button>
+      </div>
+    </form>
   );
 }
 

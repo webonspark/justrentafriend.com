@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const { Op } = require("sequelize");
 const {
   sequelize,
@@ -32,19 +33,28 @@ const { isBlocked, MEETING_PLACE_TYPES } = require("../profiles/profile.service"
  *
  *   Customer requests  → pending
  *   Companion accepts  → accepted      (or rejects → rejected)
- *   Customer pays      → confirmed     money held in escrow, chat opens
- *   Both check in at the meet          (safety record)
- *   Customer confirms it happened, or 24h pass after the end with no
- *   dispute           → completed     payout released to the Companion
- *   Either side may cancel (refund by the time rules) or dispute
- *   (money stays held until an admin decides).
+ *   Customer pays      → confirmed     money held in escrow, chat opens,
+ *                                      the Customer gets a 4-digit start code
+ *   Companion enters the code at the meet
+ *                      → in_progress   proof the meet really happened
+ *   Either side ends the meet, or the booked time runs out
+ *                      → completed     money still held: 24-hour complaint window
+ *   Window passes with no complaint    payout ready; the owner releases it
+ *                                      (or it goes automatically if the
+ *                                      payout_auto_release setting is on)
+ *   Either side may cancel before the meet (refund by the time rules) or
+ *   raise a problem until the window closes; a paid meet whose code was
+ *   never entered is sent to the admin as a possible no-show. In both cases
+ *   the money stays held until an admin decides: refund, pay, or split.
  *
  * Every rule here runs on the server. The browser only asks.
  */
 
 const PAYMENT_WINDOW_HOURS = 12;   // accepted → must pay within this
 const RESPONSE_WINDOW_HOURS = 24;  // pending → companion must answer within this
-const AUTO_COMPLETE_HOURS = 24;    // after the end, with no dispute
+const COMPLAINT_WINDOW_HOURS = Booking.COMPLAINT_WINDOW_HOURS; // after the meet ends
+const NO_SHOW_GRACE_MINUTES = 60;  // code never entered this long after the end → admin
+const MAX_CODE_ATTEMPTS = 5;
 const MIN_LEAD_MINUTES = 120;      // book at least two hours ahead
 const MAX_DAYS_AHEAD = 60;
 const MAX_HOURS = 8;
@@ -104,6 +114,14 @@ function bookingJson(b, viewerId) {
     respondedAt: b.respondedAt,
     rejectReason: b.rejectReason,
     paidAt: b.paidAt,
+    // The start code is the Customer's to show; the Companion must never see it.
+    startCode: side === "customer" && ["confirmed"].includes(b.status) ? b.startCode : null,
+    startedAt: b.startedAt,
+    complaintWindowEndsAt: b.completedAt ? new Date(new Date(b.completedAt).getTime() + COMPLAINT_WINDOW_HOURS * 3600e3) : null,
+    canDispute:
+      b.status === "in_progress" ||
+      (b.status === "confirmed" && Date.now() >= new Date(b.startAt).getTime()) ||
+      (typeof b.inComplaintWindow === "function" && b.inComplaintWindow() && !b.payoutReleasedAt),
     customerCheckInAt: b.customerCheckInAt,
     companionCheckInAt: b.companionCheckInAt,
     customerCompletedAt: b.customerCompletedAt,
@@ -335,16 +353,21 @@ paymentService.bookingHooks.onPaid = async (payment) => {
     return;
   }
   await sequelize.transaction(async (t) => {
-    await b.update({ status: "confirmed", paidAt: new Date() }, { transaction: t });
+    await b.update({ status: "confirmed", paidAt: new Date(), startCode: newStartCode(), startCodeAttempts: 0 }, { transaction: t });
     const existing = await Conversation.findOne({ where: { bookingId: b.id }, transaction: t });
     if (!existing) {
       await Conversation.create({ bookingId: b.id, customerId: b.customerId, companionId: b.companionId }, { transaction: t });
     }
   });
   const when = new Date(b.startAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
-  await notify(b.customerId, { type: "booking_confirmed", title: "Booking confirmed", body: `Paid. See you on ${when} at ${b.meetingPlaceName}. Chat is open.`, link: `/bookings/${b.id}`, urgent: true });
-  await notify(b.companionId, { type: "booking_confirmed", title: "Booking confirmed and paid", body: `${when} at ${b.meetingPlaceName}. Your payout is released after the meet.`, link: `/bookings/${b.id}`, urgent: true });
+  await notify(b.customerId, { type: "booking_confirmed", title: "Booking confirmed", body: `Paid. See you on ${when} at ${b.meetingPlaceName}. Chat is open. Show your start code to your Companion when you meet.`, link: `/bookings/${b.id}`, urgent: true });
+  await notify(b.companionId, { type: "booking_confirmed", title: "Booking confirmed and paid", body: `${when} at ${b.meetingPlaceName}. Ask the Customer for their 4-digit start code when you meet.`, link: `/bookings/${b.id}`, urgent: true });
 };
+
+/** A 4-digit code, 1000–9999, from a secure source. */
+function newStartCode() {
+  return String(crypto.randomInt(1000, 10000));
+}
 
 async function refundPayment(payment, amountPaise) {
   const amount = Math.min(Number(amountPaise), Number(payment.totalPaise) - Number(payment.refundedPaise || 0));
@@ -413,6 +436,7 @@ async function cancel(user, id, reason) {
 
 /* ------------------------------ the meet ------------------------------ */
 
+/** Safety record only: either side can mark that they have arrived. */
 async function checkIn(user, id) {
   const b = await loadFor(user, id);
   if (b.status !== "confirmed") throw conflict("Check-in opens once the booking is confirmed.");
@@ -427,54 +451,88 @@ async function checkIn(user, id) {
 }
 
 /**
- * Check-out / "it happened". The Customer's confirmation releases the
- * payout; the Companion's alone does not (the 24-hour auto-complete covers
- * a Customer who forgets).
+ * The Companion enters the Customer's 4-digit code at the meet. A right
+ * code is the proof both people were there: confirmed → in_progress.
+ * Five wrong tries lock the code; the admin can then decide.
+ */
+async function startMeet(companion, id, code) {
+  const b = await loadFor(companion, id);
+  if (b.companionId !== companion.id) throw forbidden("Only the Companion enters the start code.");
+  if (b.status !== "confirmed") throw conflict("This meet cannot be started now.");
+  const now = Date.now();
+  if (now < new Date(b.startAt).getTime() - 30 * 60000) throw conflict("You can start the meet from 30 minutes before the booked time.");
+  if (now > new Date(b.endAt).getTime()) throw conflict("The booked time is over. Raise a problem if the meet did not happen.");
+  if (b.startCodeAttempts >= MAX_CODE_ATTEMPTS) throw conflict("Too many wrong codes. Raise a problem and our team will help.");
+
+  const given = String(code || "").replace(/\D/g, "");
+  const ok = b.startCode && given.length === 4 &&
+    crypto.timingSafeEqual(Buffer.from(given), Buffer.from(String(b.startCode)));
+  if (!ok) {
+    await b.update({ startCodeAttempts: b.startCodeAttempts + 1 });
+    const left = MAX_CODE_ATTEMPTS - b.startCodeAttempts;
+    throw badRequest(left > 0 ? `That code is not right. ${left} ${left === 1 ? "try" : "tries"} left.` : "That code is not right, and no tries are left.");
+  }
+
+  const nowDate = new Date();
+  await b.update({ status: "in_progress", startedAt: nowDate, companionCheckInAt: b.companionCheckInAt || nowDate, customerCheckInAt: b.customerCheckInAt || nowDate });
+  await notify(b.customerId, { type: "meet_started", title: "Your meet has started", body: `Enjoy your time. The SOS button is on the booking page if you need it.`, link: `/bookings/${b.id}` });
+  return bookingJson(await loadFor(companion, id), companion.id);
+}
+
+/**
+ * Ends the meet: in_progress → completed. Either side can tap it; the
+ * clock does it automatically when the booked time runs out. The money
+ * stays held for the complaint window.
  */
 async function complete(user, id) {
   const b = await loadFor(user, id);
-  if (b.status !== "confirmed") throw conflict("Only a confirmed booking can be completed.");
-  if (Date.now() < new Date(b.startAt).getTime()) throw conflict("The meet has not started yet.");
+  if (b.status !== "in_progress") throw conflict("Only a meet in progress can be ended. The Companion starts it with your start code.");
   const field = user.id === b.customerId ? "customerCompletedAt" : "companionCompletedAt";
   await b.update({ [field]: b[field] || new Date() });
-  if (user.id === b.customerId) await finish(b, "customer confirmed");
-  else {
-    await notify(b.customerId, {
-      type: "complete_requested",
-      title: "Did your meet happen?",
-      body: "Confirm it to release the Companion's payout, or raise a problem within 24 hours.",
-      link: `/bookings/${b.id}`,
-    });
-  }
+  await finish(b, `ended by the ${user.id === b.customerId ? "customer" : "companion"}`);
   return bookingJson(await loadFor(user, id), user.id);
 }
 
-/** Completes a booking and releases the escrow. */
+/**
+ * Marks the meet completed and records the Companion's payout as held.
+ * Nothing is paid here: the payout is released after the complaint window
+ * (see sweep), or straight away when an admin settles a dispute.
+ */
 async function finish(b, why) {
+  const firstTime = !b.completedAt;
   await sequelize.transaction(async (t) => {
-    await b.update({ status: "completed", completedAt: new Date() }, { transaction: t });
-    await Profile.increment("completedMeets", { by: 1, where: { userId: b.companionId }, transaction: t });
-    await Conversation.update({ isClosed: true }, { where: { bookingId: b.id }, transaction: t });
+    await b.update({ status: "completed", completedAt: b.completedAt || new Date() }, { transaction: t });
+    if (firstTime) await Profile.increment("completedMeets", { by: 1, where: { userId: b.companionId }, transaction: t });
     const exists = await Payout.findOne({ where: { bookingId: b.id }, transaction: t });
     if (!exists) {
-      await Payout.create({ companionId: b.companionId, bookingId: b.id, amountPaise: b.payoutPaise, status: "pending" }, { transaction: t });
+      await Payout.create(
+        { companionId: b.companionId, bookingId: b.id, amountPaise: b.payoutPaise, status: "pending", note: `Held for the ${COMPLAINT_WINDOW_HOURS}-hour complaint window` },
+        { transaction: t }
+      );
     }
   });
   logger.info(`Booking ${b.id} completed (${why}).`);
-  await releasePayout(b.id);
-  for (const uid of [b.customerId, b.companionId]) {
-    await notify(uid, { type: "booking_completed", title: "Meet completed — leave a review", body: "How did it go? Your rating helps keep everyone safe.", link: `/bookings/${b.id}` });
+  if (firstTime) {
+    for (const uid of [b.customerId, b.companionId]) {
+      await notify(uid, {
+        type: "booking_completed",
+        title: "Meet completed — leave a review",
+        body: `How did it go? If something was wrong, tell us within ${COMPLAINT_WINDOW_HOURS} hours.`,
+        link: `/bookings/${b.id}`,
+      });
+    }
   }
 }
 
 /**
- * Sends a completed booking's payout. Held if the Companion has no payout
- * account or their KYC is not approved yet — released later from the admin
- * payouts screen or when they add an account.
+ * Sends a booking's payout. Held if the Companion has no payout account or
+ * their KYC is not approved yet — released later from the admin payouts
+ * screen or when they add an account.
  */
 async function releasePayout(bookingId) {
   const payout = await Payout.findOne({ where: { bookingId } });
   if (!payout || payout.status === "paid") return payout;
+  if (Number(payout.amountPaise) <= 0) return payout;
   const companion = await User.findByPk(payout.companionId);
   const account = await PayoutAccount.findOne({ where: { companionId: payout.companionId } });
   if (!account || companion.kycStatus !== "approved") {
@@ -493,12 +551,20 @@ async function releasePayout(bookingId) {
   return payout;
 }
 
+/**
+ * Raises a problem. Allowed once the meet time has come (a no-show), during
+ * the meet, and until the complaint window after it closes. The money stays
+ * held until an admin decides.
+ */
 async function dispute(user, id, reason) {
   const b = await loadFor(user, id);
-  const open = b.status === "confirmed" || (b.status === "completed" && !b.payoutReleasedAt);
-  if (!open) throw conflict("This booking can no longer be disputed.");
-  if (b.status === "confirmed" && Date.now() < new Date(b.startAt).getTime()) {
-    throw conflict("The meet has not started yet — cancel the booking instead.");
+  const open =
+    b.status === "in_progress" ||
+    (b.status === "confirmed" && Date.now() >= new Date(b.startAt).getTime()) ||
+    (b.inComplaintWindow() && !b.payoutReleasedAt);
+  if (!open) {
+    if (b.status === "confirmed") throw conflict("The meet has not started yet — cancel the booking instead.");
+    throw conflict(`Problems can be raised until ${COMPLAINT_WINDOW_HOURS} hours after the meet ends.`);
   }
   if (!reason || String(reason).trim().length < 10) throw badRequest("Tell us what went wrong (at least a sentence).");
   await b.update({ status: "disputed", disputeReason: String(reason).slice(0, 500), disputedById: user.id });
@@ -514,7 +580,7 @@ async function list(user, { tab = "upcoming" } = {}) {
   const mine = { [Op.or]: [{ customerId: user.id }, { companionId: user.id }] };
   const tabs = {
     requests: { status: { [Op.in]: ["pending", "accepted"] } },
-    upcoming: { status: { [Op.in]: ["confirmed"] } },
+    upcoming: { status: { [Op.in]: ["confirmed", "in_progress"] } },
     past: { status: { [Op.in]: ["completed", "cancelled", "rejected", "expired", "disputed"] } },
   };
   const rows = await Booking.findAll({
@@ -533,7 +599,12 @@ async function list(user, { tab = "upcoming" } = {}) {
 }
 
 async function get(user, id) {
-  return bookingJson(await loadFor(user, id), user.id);
+  const b = await loadFor(user, id);
+  // Bookings paid before start codes existed get one the first time the Customer looks.
+  if (b.status === "confirmed" && !b.startCode && b.customerId === user.id) {
+    await b.update({ startCode: newStartCode(), startCodeAttempts: 0 });
+  }
+  return bookingJson(b, user.id);
 }
 
 /* ------------------------------ reviews ------------------------------ */
@@ -565,7 +636,7 @@ async function review(user, id, { rating, comment }) {
 
 /* ------------------------------ clock ------------------------------ */
 
-/** Run every few minutes: expiries, reminders, auto-completion. */
+/** Run every few minutes: expiries, reminders, meet ends, no-shows, payouts. */
 async function sweep() {
   const now = new Date();
 
@@ -590,17 +661,43 @@ async function sweep() {
   });
   for (const b of soon) {
     await b.update({ reminderSentAt: now });
+    await notify(b.customerId, { type: "booking_reminder", title: "Your meet starts within 2 hours", body: `At ${b.meetingPlaceName}. Your start code is on the booking page — show it to your Companion when you meet.`, link: `/bookings/${b.id}`, urgent: true });
+    await notify(b.companionId, { type: "booking_reminder", title: "Your meet starts within 2 hours", body: `At ${b.meetingPlaceName}. Ask the Customer for their start code and enter it to begin.`, link: `/bookings/${b.id}`, urgent: true });
+  }
+
+  // Meets in progress end by themselves when the booked time runs out.
+  const overrun = await Booking.findAll({ where: { status: "in_progress", endAt: { [Op.lt]: now } } });
+  for (const b of overrun) await finish(b, "booked time ended");
+
+  // Paid, but the start code was never entered: possible no-show. The money
+  // stays held and an admin decides who gets it.
+  const noShows = await Booking.findAll({
+    where: { status: "confirmed", startedAt: null, endAt: { [Op.lt]: new Date(now - NO_SHOW_GRACE_MINUTES * 60000) } },
+  });
+  for (const b of noShows) {
+    await b.update({ status: "disputed", disputeReason: "The start code was never entered — possible no-show. Held for review." });
     for (const uid of [b.customerId, b.companionId]) {
-      await notify(uid, { type: "booking_reminder", title: "Your meet starts within 2 hours", body: `At ${b.meetingPlaceName}. Remember to check in when you arrive.`, link: `/bookings/${b.id}`, urgent: true });
+      await notify(uid, { type: "booking_disputed", title: `Booking #${b.id} is under review`, body: "The meet was never started with the start code, so our team will check what happened. The payment is on hold meanwhile.", link: `/bookings/${b.id}` });
     }
   }
 
-  const done = await Booking.findAll({
-    where: { status: "confirmed", endAt: { [Op.lt]: new Date(now - AUTO_COMPLETE_HOURS * 3600e3) } },
+  // Complaint window over with no dispute: the payout is ready.
+  const autoRelease = String(await settings.get("payout_auto_release", false)) === "true";
+  const ripe = await Payout.findAll({
+    where: { status: "pending" },
+    include: [{ model: Booking, as: "booking", where: { status: "completed", completedAt: { [Op.lt]: new Date(now - COMPLAINT_WINDOW_HOURS * 3600e3) } } }],
   });
-  for (const b of done) await finish(b, "auto-completed after 24 hours");
+  for (const p of ripe) {
+    await Conversation.update({ isClosed: true }, { where: { bookingId: p.bookingId } });
+    if (autoRelease) {
+      await releasePayout(p.bookingId);
+    } else {
+      await p.update({ status: "approved", note: "Complaint window passed — ready to release" });
+      await notify(p.companionId, { type: "payout_ready", title: `Payout of ${formatINR(p.amountPaise)} approved`, body: `For booking #${p.bookingId}. It will be sent to your bank or UPI shortly.`, link: "/earnings" });
+    }
+  }
 
-  return { expired: stalePending.length + unpaid.length, reminded: soon.length, completed: done.length };
+  return { expired: stalePending.length + unpaid.length, reminded: soon.length, ended: overrun.length, noShows: noShows.length, payoutsReady: ripe.length };
 }
 
 module.exports = {
@@ -611,6 +708,7 @@ module.exports = {
   startPayment,
   cancel,
   checkIn,
+  startMeet,
   complete,
   finish,
   releasePayout,

@@ -119,8 +119,8 @@ export function Payouts() {
   return (
     <>
       {modal}
-      <PageHead title="Payouts" sub="Held payouts need a payout account and approved KYC, or a resolved dispute.">
-        <Select label="Status" value={status} onChange={setStatus} options={[["", "All"], ["on_hold", "On hold"], ["pending", "Pending"], ["failed", "Failed"], ["paid", "Paid"]]} />
+      <PageHead title="Payouts" sub="Pending = still inside the 24-hour complaint window. Approved = window passed, ready to release. On hold = disputed, or the Companion has no payout account / KYC yet.">
+        <Select label="Status" value={status} onChange={setStatus} options={[["", "All"], ["approved", "Ready to release"], ["pending", "In complaint window"], ["on_hold", "On hold"], ["failed", "Failed"], ["paid", "Paid"]]} />
       </PageHead>
       <Alert tone={msg.tone}>{msg.text}</Alert>
       <Loader state={state} empty={state.data?.payouts.length === 0} emptyTitle="No payouts">

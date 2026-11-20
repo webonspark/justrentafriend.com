@@ -9,7 +9,9 @@ const { DataTypes } = require("sequelize");
  *   accepted   the Companion said yes. The Customer now pays.
  *   rejected   the Companion said no. Nothing was charged.
  *   confirmed  paid. The money is held (escrow), chat opens.
- *   completed  the meet happened. The payout is released to the Companion.
+ *   in_progress the Companion entered the Customer's start code at the meet.
+ *   completed  the meet ended. The money stays held for the complaint
+ *              window, then the payout is released to the Companion.
  *   cancelled  called off by either side; refund decided by the time rules.
  *   disputed   someone raised a problem; the money stays held for an admin.
  *   expired    nobody acted in time (no answer, or accepted but never paid).
@@ -68,6 +70,7 @@ module.exports = (sequelize) => {
           "accepted",
           "rejected",
           "confirmed",
+          "in_progress",
           "completed",
           "cancelled",
           "disputed",
@@ -80,6 +83,13 @@ module.exports = (sequelize) => {
       respondedAt: { type: DataTypes.DATE, allowNull: true },
       rejectReason: { type: DataTypes.STRING(300), allowNull: true },
       paidAt: { type: DataTypes.DATE, allowNull: true },
+
+      /* The 4-digit code the Customer shows at the meet. The Companion enters
+         it to start the meet — proof that both were really there. Shown to
+         the Customer only. */
+      startCode: { type: DataTypes.STRING(4), allowNull: true },
+      startCodeAttempts: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+      startedAt: { type: DataTypes.DATE, allowNull: true },
 
       /* Check-in / check-out, for safety and as proof the meet happened. */
       customerCheckInAt: { type: DataTypes.DATE, allowNull: true },
@@ -124,11 +134,23 @@ module.exports = (sequelize) => {
 
   /** Chat and the meet itself open only once the money is held. */
   Booking.prototype.isUnlocked = function isUnlocked() {
-    return ["confirmed", "completed", "disputed"].includes(this.status);
+    return ["confirmed", "in_progress", "completed", "disputed"].includes(this.status);
   };
 
   /** Statuses that hold the Companion's time, for clash checks. */
-  Booking.LIVE = ["pending", "accepted", "confirmed"];
+  Booking.LIVE = ["pending", "accepted", "confirmed", "in_progress"];
+
+  /** Hours after the meet ends during which either side can raise a complaint. */
+  Booking.COMPLAINT_WINDOW_HOURS = 24;
+
+  /** True while a completed meet is still inside its complaint window. */
+  Booking.prototype.inComplaintWindow = function inComplaintWindow(now = Date.now()) {
+    return (
+      this.status === "completed" &&
+      Boolean(this.completedAt) &&
+      now < new Date(this.completedAt).getTime() + Booking.COMPLAINT_WINDOW_HOURS * 3600e3
+    );
+  };
 
   return Booking;
 };

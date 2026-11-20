@@ -8,7 +8,7 @@ import { AdminTable, Facts, Loader, PageHead, Pager, Select, StatusBadge, errTex
 
 /** Every booking, and one booking with its money, disputes and chat. */
 
-const STATUSES = ["", "pending", "accepted", "confirmed", "completed", "disputed", "cancelled", "rejected", "expired"];
+const STATUSES = ["", "pending", "accepted", "confirmed", "in_progress", "completed", "disputed", "cancelled", "rejected", "expired"];
 
 export function BookingsAdmin() {
   const [status, setStatus] = useState("");
@@ -60,9 +60,9 @@ export function BookingAdminDetail() {
 
   const resolve = (outcome) => {
     const labels = {
-      release: ["Release the payout?", "The booking is completed and the Companion is paid.", "Release"],
+      release: ["Pay the Companion?", "The meet counts as done: the Companion is paid their share now (amount less commission). No refund.", "Pay Companion"],
       refund_full: ["Refund the Customer in full?", "The booking is cancelled and the Companion is not paid.", "Refund in full"],
-      refund_partial: ["Partial refund", "The Customer gets this share back; the Companion is paid the rest, less commission.", "Refund part"],
+      refund_partial: ["Split the money", "The Customer gets this share back; the Companion is paid the rest, less commission.", "Split"],
     }[outcome];
     ask({
       title: labels[0],
@@ -117,7 +117,7 @@ export function BookingAdminDetail() {
       <Loader state={state}>
         {state.data && (() => {
           const { booking: b, payments, payout, reports } = state.data;
-          const open = ["confirmed", "disputed"].includes(b.status);
+          const open = ["confirmed", "in_progress", "disputed"].includes(b.status) || (b.status === "completed" && !b.payoutReleasedAt);
           return (
             <>
               <PageHead title={`Booking #${b.id}`} sub={`${b.service?.name || "Service"} · ${dateTime(b.startAt)} · ${b.hours} h`}>
@@ -136,10 +136,10 @@ export function BookingAdminDetail() {
                 <Card className="mb-6">
                   <p className="mb-3 text-sm font-semibold">Settle</p>
                   <div className="flex flex-wrap gap-2">
-                    {open && <Button size="sm" onClick={() => resolve("release")}>Release payout</Button>}
-                    {open && <Button size="sm" variant="outline" onClick={() => resolve("refund_partial")}>Partial refund</Button>}
-                    {open && <Button size="sm" variant="outline" onClick={() => resolve("refund_full")}>Full refund</Button>}
-                    <Button size="sm" variant="ghost" onClick={cancel}>Cancel booking</Button>
+                    {open && <Button size="sm" onClick={() => resolve("release")}>Pay Companion</Button>}
+                    {open && <Button size="sm" variant="outline" onClick={() => resolve("refund_partial")}>Split</Button>}
+                    {open && <Button size="sm" variant="outline" onClick={() => resolve("refund_full")}>Refund Customer</Button>}
+                    {b.status !== "completed" && <Button size="sm" variant="ghost" onClick={cancel}>Cancel booking</Button>}
                   </div>
                 </Card>
               )}
@@ -156,9 +156,12 @@ export function BookingAdminDetail() {
                       ["Place", `${b.meetingPlace.name} (${b.meetingPlace.type})`],
                       ["Address", b.meetingPlace.address],
                       ["Note", b.note],
+                      ["Start code", b.startCode || "—"],
+                      ["Meet started (code entered)", dateTime(b.startedAt)],
                       ["Customer check-in", dateTime(b.customerCheckInAt)],
                       ["Companion check-in", dateTime(b.companionCheckInAt)],
-                      ["Completed", dateTime(b.completedAt)],
+                      ["Meet ended", dateTime(b.completedAt)],
+                      b.complaintWindowEndsAt && ["Complaint window ends", dateTime(b.complaintWindowEndsAt)],
                       b.cancelledAt && ["Cancelled", `${dateTime(b.cancelledAt)} by ${b.cancelledBy} — ${b.cancelReason || ""}`],
                       b.disputeResolution && ["Resolution", b.disputeResolution],
                     ]}

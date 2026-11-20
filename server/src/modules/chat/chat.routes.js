@@ -30,7 +30,7 @@ router.use(requireAuth);
 
 async function load(user, id) {
   const c = await Conversation.findByPk(id, {
-    include: [{ model: Booking, as: "booking", attributes: ["id", "status", "startAt", "meetingPlaceName"] }],
+    include: [{ model: Booking, as: "booking", attributes: ["id", "status", "startAt", "meetingPlaceName", "completedAt"] }],
   });
   if (!c || (c.customerId !== user.id && c.companionId !== user.id)) throw notFound("That conversation does not exist.");
   return c;
@@ -57,7 +57,7 @@ router.get(
     const me = req.user.id;
     const rows = await Conversation.findAll({
       where: { [Op.or]: [{ customerId: me }, { companionId: me }] },
-      include: [{ model: Booking, as: "booking", attributes: ["id", "status", "startAt", "meetingPlaceName"] }],
+      include: [{ model: Booking, as: "booking", attributes: ["id", "status", "startAt", "meetingPlaceName", "completedAt"] }],
       order: [["lastMessageAt", "DESC"], ["createdAt", "DESC"]],
     });
     const out = [];
@@ -101,8 +101,10 @@ router.post(
   messageLimiter,
   wrap(async (req, res) => {
     const c = await load(req.user, req.params.id);
-    if (c.isClosed || !["confirmed", "disputed"].includes(c.booking.status)) {
-      throw forbidden("This chat is closed. Chat is open only while a booking is confirmed.");
+    const b = c.booking;
+    const afterMeet = b.status === "completed" && b.completedAt && Date.now() < new Date(b.completedAt).getTime() + 24 * 3600e3;
+    if (c.isClosed || !(["confirmed", "in_progress", "disputed"].includes(b.status) || afterMeet)) {
+      throw forbidden("This chat is closed. Chat is open from payment until 24 hours after the meet.");
     }
     const to = otherId(c, req.user);
     if (await isBlocked(req.user.id, to)) throw forbidden("You cannot message this person.");

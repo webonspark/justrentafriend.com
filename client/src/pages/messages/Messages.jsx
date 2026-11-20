@@ -121,7 +121,8 @@ function Thread({ id, onRead }) {
   if (problem && !data) return <Alert>{problem}</Alert>;
   if (!data) return <Skeleton className="h-[60vh] w-full rounded-2xl" />;
   const { conversation: c, messages } = data;
-  const open = !c.isClosed && ["confirmed", "disputed"].includes(c.booking?.status);
+  const afterMeet = c.booking?.status === "completed" && c.booking?.completedAt && Date.now() < new Date(c.booking.completedAt).getTime() + 24 * 3600e3;
+  const open = !c.isClosed && (["confirmed", "in_progress", "disputed"].includes(c.booking?.status) || afterMeet);
 
   return (
     <div className="flex h-[calc(100vh-180px)] min-h-[420px] flex-col rounded-panel border border-ink-line bg-ink-raised">

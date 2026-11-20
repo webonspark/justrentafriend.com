@@ -18,7 +18,7 @@ router.get(
   wrap(async (req, res) => {
     const id = req.user.id;
     // Payouts that were held for a missing account or KYC go out now if fixed.
-    const held = await Payout.findAll({ where: { companionId: id, status: "on_hold", note: { [Op.ne]: "Disputed" } } });
+    const held = await Payout.findAll({ where: { companionId: id, status: "on_hold", amountPaise: { [Op.gt]: 0 }, note: { [Op.notIn]: ["Disputed", "Refunded to Customer after dispute"] } } });
     for (const p of held) await releasePayout(p.bookingId);
 
     const [payouts, escrow, account, me] = await Promise.all([
@@ -27,7 +27,7 @@ router.get(
         include: [{ model: Booking, as: "booking", attributes: ["id", "startAt", "hours", "amountPaise", "commissionPaise", "status"] }],
         order: [["createdAt", "DESC"]],
       }),
-      Booking.findAll({ where: { companionId: id, status: { [Op.in]: ["confirmed", "disputed"] } }, attributes: ["payoutPaise"] }),
+      Booking.findAll({ where: { companionId: id, status: { [Op.in]: ["confirmed", "in_progress", "disputed"] } }, attributes: ["payoutPaise"] }),
       PayoutAccount.findOne({ where: { companionId: id } }),
       User.findByPk(id, { attributes: ["kycStatus"] }),
     ]);

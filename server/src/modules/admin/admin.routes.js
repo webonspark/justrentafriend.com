@@ -23,6 +23,7 @@ const {
   AuditLog,
   AdminUser,
   Subscription,
+  RefreshToken,
 } = require("../../models");
 const env = require("../../config/env");
 const settings = require("../../lib/settings");
@@ -31,7 +32,7 @@ const { requireAdmin, requireAdminRole } = require("../../middleware/auth");
 const { record, recordView } = require("../../lib/audit");
 const { publicUrl, absolute, remove: removeUpload } = require("../../lib/uploads");
 const { notify } = require("../../lib/notify");
-const { revokeAllForUser } = require("../../lib/tokens");
+const { revokeAllForUser, signImpersonationToken, IMPERSONATION_MINUTES } = require("../../lib/tokens");
 const { badRequest, notFound, conflict } = require("../../lib/errors");
 const bookingService = require("../bookings/booking.service");
 const paymentService = require("../payments/payment.service");
@@ -158,28 +159,82 @@ const memberRow = (u) => ({
   area: u.profile?.area,
   createdAt: u.createdAt,
   lastLoginAt: u.lastLoginAt,
+  emailVerified: u.emailVerified,
+  mobileVerified: u.mobileVerified,
+  strikeCount: u.strikeCount,
+  supportAccessUntil: u.allowsSupportAccess() ? u.supportAccessUntil : null,
 });
+
+/**
+ * The member grid. Filters (all optional):
+ *   q            name, email or mobile contains
+ *   role, status, kyc (kycStatus), approval (profile approval status)
+ *   emailVerified / mobileVerified   "yes" | "no"
+ *   supportAccess "yes"              member currently allows a support view
+ *   city         city or area contains
+ *   idFrom, idTo, joinedFrom, joinedTo (YYYY-MM-DD)
+ *   sort         id | name | joined | lastLogin, dir asc | desc
+ *   limit        up to 200 per page; format=csv exports every match (≤ 5,000)
+ */
+function memberFilters(qs) {
+  const where = {};
+  const profileWhere = {};
+  if (qs.role) where.role = qs.role;
+  if (qs.status) where.status = qs.status;
+  if (qs.kyc) where.kycStatus = qs.kyc;
+  if (qs.emailVerified) where.emailVerified = qs.emailVerified === "yes";
+  if (qs.mobileVerified) where.mobileVerified = qs.mobileVerified === "yes";
+  if (qs.supportAccess === "yes") where.supportAccessUntil = { [Op.gt]: new Date() };
+  if (qs.q) {
+    const q = `%${String(qs.q).trim()}%`;
+    where[Op.or] = [{ fullName: { [Op.like]: q } }, { email: { [Op.like]: q } }, { mobile: { [Op.like]: q } }];
+  }
+  const id = {};
+  if (Number(qs.idFrom)) id[Op.gte] = Number(qs.idFrom);
+  if (Number(qs.idTo)) id[Op.lte] = Number(qs.idTo);
+  if (Object.getOwnPropertySymbols(id).length) where.id = id;
+  const joined = {};
+  if (/^\d{4}-\d{2}-\d{2}$/.test(qs.joinedFrom || "")) joined[Op.gte] = new Date(`${qs.joinedFrom}T00:00:00+05:30`);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(qs.joinedTo || "")) joined[Op.lte] = new Date(`${qs.joinedTo}T23:59:59+05:30`);
+  if (Object.getOwnPropertySymbols(joined).length) where.createdAt = joined;
+  if (qs.approval) profileWhere.approvalStatus = qs.approval;
+  if (qs.city) {
+    const c = `%${String(qs.city).trim()}%`;
+    profileWhere[Op.or] = [{ city: { [Op.like]: c } }, { area: { [Op.like]: c } }];
+  }
+  const sorts = { id: "id", name: "fullName", joined: "createdAt", lastLogin: "lastLoginAt" };
+  const order = [[sorts[qs.sort] || "createdAt", qs.dir === "asc" ? "ASC" : "DESC"]];
+  const hasProfileFilter = Object.keys(profileWhere).length || Object.getOwnPropertySymbols(profileWhere).length;
+  return {
+    where,
+    include: [{ model: Profile, as: "profile", ...(hasProfileFilter ? { where: profileWhere, required: true } : {}) }],
+    order,
+  };
+}
+
+const csvCell = (v) => {
+  const s = v === null || v === undefined ? "" : String(v);
+  // Neutralise spreadsheet formulas, then quote.
+  const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
+  return `"${safe.replace(/"/g, '""')}"`;
+};
 
 router.get(
   "/users",
   ANY,
   wrap(async (req, res) => {
-    const { limit, offset, page } = paging(req.query);
-    const where = {};
-    if (req.query.role) where.role = req.query.role;
-    if (req.query.status) where.status = req.query.status;
-    if (req.query.q) {
-      const q = `%${String(req.query.q).trim()}%`;
-      where[Op.or] = [{ fullName: { [Op.like]: q } }, { email: { [Op.like]: q } }, { mobile: { [Op.like]: q } }];
+    const f = memberFilters(req.query);
+    if (req.query.format === "csv") {
+      const rows = await User.findAll({ ...f, limit: 5000 });
+      const head = ["ID", "Name", "Email", "Email verified", "Mobile", "Mobile verified", "Role", "Status", "KYC", "Approval", "City", "Area", "Strikes", "Joined", "Last sign-in"];
+      const lines = rows.map((u) => [u.id, u.fullName, u.email, u.emailVerified ? "yes" : "no", u.mobile, u.mobileVerified ? "yes" : "no", u.role, u.status, u.kycStatus, u.profile?.approvalStatus, u.profile?.city, u.profile?.area, u.strikeCount, u.createdAt?.toISOString?.() || u.createdAt, u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : ""].map(csvCell).join(","));
+      await record(req, { action: "users.export", entityType: "user", detail: `${rows.length} rows`, sensitive: true });
+      res.type("text/csv").attachment(`members-${new Date().toISOString().slice(0, 10)}.csv`).send([head.map(csvCell).join(","), ...lines].join("\n"));
+      return;
     }
-    const { rows, count } = await User.findAndCountAll({
-      where,
-      include: [{ model: Profile, as: "profile" }],
-      order: [["createdAt", "DESC"]],
-      limit,
-      offset,
-    });
-    res.json({ total: count, page, users: rows.map(memberRow) });
+    const { limit, offset, page } = paging(req.query, { max: 200, def: 20 });
+    const { rows, count } = await User.findAndCountAll({ ...f, limit, offset, distinct: true });
+    res.json({ total: count, page, limit, users: rows.map(memberRow) });
   })
 );
 
@@ -435,6 +490,135 @@ router.post(
     await authService.forgotPassword({ email: u.email });
     await record(req, { action: "user.password_reset_sent", entityType: "user", entityId: u.id });
     res.json({ ok: true, sentTo: u.email.replace(/^(.).*(@.*)$/, "$1•••$2") });
+  })
+);
+
+
+/* ------------------------------ support view, sessions, activity ------------------------------ */
+
+/**
+ * "Login as member": a read-only view of the member's account, for 30
+ * minutes, only while the member has switched on "Allow support to view my
+ * account". Nothing can be changed from it — the server refuses every
+ * write. The member is told, and the audit log records who looked.
+ */
+router.post(
+  "/users/:id(\\d+)/impersonate",
+  ANY,
+  wrap(async (req, res) => {
+    const u = await User.findByPk(req.params.id);
+    if (!u) throw notFound();
+    if (["banned", "deleted", "suspended"].includes(u.status)) throw conflict(`This account is ${u.status}.`);
+    if (!u.allowsSupportAccess()) {
+      throw conflict("The member has not allowed support access. Ask them to switch on “Allow support to view my account” in their Settings.");
+    }
+    const reason = String(req.body.reason || "").trim();
+    if (!reason) throw badRequest("Record why you are viewing this account.");
+    const token = signImpersonationToken(u, req.admin);
+    const expiresAt = new Date(Date.now() + IMPERSONATION_MINUTES * 60000);
+    await record(req, { action: "user.support_view", entityType: "user", entityId: u.id, detail: reason, sensitive: true });
+    await notify(u.id, {
+      type: "support_view",
+      title: "Our support team viewed your account",
+      body: `With the permission you gave in Settings. Read-only — nothing was changed. You can switch support access off at any time.`,
+      link: "/settings",
+    });
+    res.json({ accessToken: token, user: u.toSafeJSON(), expiresAt, viewer: req.admin.name });
+  })
+);
+
+/** Signs the member out on every device. */
+router.post(
+  "/users/:id(\\d+)/sign-out",
+  MOD,
+  wrap(async (req, res) => {
+    const u = await User.findByPk(req.params.id);
+    if (!u) throw notFound();
+    await revokeAllForUser(u.id);
+    await record(req, { action: "user.force_sign_out", entityType: "user", entityId: u.id, detail: req.body.reason || null });
+    res.json({ ok: true });
+  })
+);
+
+/**
+ * Everything a member has done, newest first: sign-ins (with device and
+ * IP), bookings, payments, chat activity (counts, never the text), reviews,
+ * reports, photos, ID checks, SOS alerts, and every staff action on them.
+ */
+router.get(
+  "/users/:id(\\d+)/activity",
+  ANY,
+  wrap(async (req, res) => {
+    const u = await User.findByPk(req.params.id);
+    if (!u) throw notFound();
+    const id = u.id;
+    const cap = 300;
+    const [sessions, bookings, payments, messages, reviews, reportsBy, reportsOn, photos, kyc, sos, subs, audit] = await Promise.all([
+      RefreshToken.findAll({ where: { userId: id }, order: [["createdAt", "DESC"]], limit: 500 }),
+      Booking.findAll({ where: { [Op.or]: [{ customerId: id }, { companionId: id }] }, order: [["createdAt", "DESC"]], limit: cap }),
+      Payment.findAll({ where: { userId: id }, order: [["createdAt", "DESC"]], limit: cap }),
+      Message.findAll({
+        where: { senderId: id },
+        attributes: ["conversationId", [sequelize.fn("COUNT", sequelize.col("id")), "n"], [sequelize.fn("MAX", sequelize.col("created_at")), "last"], [sequelize.fn("SUM", sequelize.literal("CASE WHEN flagged THEN 1 ELSE 0 END")), "flaggedN"]],
+        group: ["conversationId"],
+        raw: true,
+      }),
+      Review.findAll({ where: { authorId: id }, order: [["createdAt", "DESC"]], limit: cap }),
+      Report.findAll({ where: { reporterId: id }, order: [["createdAt", "DESC"]], limit: cap }),
+      Report.findAll({ where: { reportedId: id }, order: [["createdAt", "DESC"]], limit: cap }),
+      Photo.findAll({ where: { userId: id }, order: [["createdAt", "DESC"]] }),
+      KycDocument.findAll({ where: { userId: id }, order: [["createdAt", "DESC"]] }),
+      SosAlert.findAll({ where: { userId: id }, order: [["createdAt", "DESC"]] }),
+      Subscription.findAll({ where: { userId: id }, order: [["createdAt", "DESC"]] }),
+      AuditLog.findAll({
+        where: { [Op.or]: [{ entityType: "user", entityId: id }, { actorType: "user", actorId: id }] },
+        order: [["createdAt", "DESC"]],
+        limit: cap,
+      }),
+    ]);
+
+    const events = [];
+    const add = (at, kind, text, extra = {}) => at && events.push({ at, kind, text, ...extra });
+    add(u.createdAt, "account", "Account created");
+
+    // One sign-in per session family (refreshes are the same sign-in).
+    const firstOfFamily = new Map();
+    for (const s of sessions) {
+      const prev = firstOfFamily.get(s.familyId);
+      if (!prev || new Date(s.createdAt) < new Date(prev.createdAt)) firstOfFamily.set(s.familyId, s);
+    }
+    for (const s of firstOfFamily.values()) {
+      add(s.createdAt, "sign_in", "Signed in", { detail: [s.ip, s.userAgent && s.userAgent.slice(0, 120)].filter(Boolean).join(" · ") });
+    }
+
+    for (const b of bookings) {
+      const side = b.customerId === id ? "Requested" : "Received request for";
+      add(b.createdAt, "booking", `${side} booking #${b.id}`, { link: `/admin/bookings/${b.id}`, detail: `Now ${b.status.replace("_", " ")} · ₹${money(b.amountPaise) / 100}` });
+      if (b.cancelledAt && b.cancelledById === id) add(b.cancelledAt, "booking", `Cancelled booking #${b.id}`, { link: `/admin/bookings/${b.id}`, detail: b.cancelReason });
+      if (b.startedAt) add(b.startedAt, "booking", `Meet started · booking #${b.id}`, { link: `/admin/bookings/${b.id}` });
+      if (b.disputedById === id) add(b.updatedAt, "dispute", `Raised a problem on booking #${b.id}`, { link: `/admin/bookings/${b.id}`, detail: b.disputeReason });
+    }
+    for (const p of payments) {
+      add(p.paidAt || p.createdAt, "payment", `${p.status === "paid" || p.status === "refunded" ? "Paid" : `Payment ${p.status}`} ₹${money(p.totalPaise) / 100} for ${p.purpose}`, { detail: p.refundedPaise ? `Refunded ₹${money(p.refundedPaise) / 100}` : p.invoiceNo });
+    }
+    for (const m of messages) {
+      add(m.last, "chat", `Sent ${m.n} message${Number(m.n) === 1 ? "" : "s"} in conversation #${m.conversationId}`, { detail: Number(m.flaggedN) ? `${m.flaggedN} flagged` : null });
+    }
+    for (const r of reviews) add(r.createdAt, "review", `Left a ${r.rating}★ review on booking #${r.bookingId}`, { detail: r.isHidden ? "Hidden by staff" : null });
+    for (const r of reportsBy) add(r.createdAt, "report", `Reported member #${r.reportedId}: ${r.reason.replace(/_/g, " ")}`, { detail: r.status });
+    for (const r of reportsOn) add(r.createdAt, "report", `Was reported by member #${r.reporterId}: ${r.reason.replace(/_/g, " ")}`, { detail: r.status });
+    for (const p of photos) add(p.createdAt, "photo", "Uploaded a photo", { detail: p.moderationStatus });
+    for (const k of kyc) add(k.createdAt, "kyc", `Submitted ${k.docType.toUpperCase()} for ID check`, { detail: k.status });
+    for (const a of sos) add(a.createdAt, "sos", "Pressed SOS", { detail: a.status });
+    for (const s of subs) add(s.createdAt, "membership", `Membership ${s.status}`, { detail: `₹${money(s.totalPaise) / 100}` });
+    for (const a of audit) {
+      const byStaff = a.actorType === "admin";
+      add(a.createdAt, byStaff ? "staff" : "account", byStaff ? `Staff: ${a.action.replace(/[._]/g, " ")}` : a.action.replace(/[._]/g, " "), { detail: [byStaff && a.actorName, a.detail].filter(Boolean).join(" — ") || null });
+    }
+
+    events.sort((a, b) => new Date(b.at) - new Date(a.at));
+    await recordView(req, { action: "user.activity_view", entityType: "user", entityId: id });
+    res.json({ events: events.slice(0, 500), total: events.length });
   })
 );
 

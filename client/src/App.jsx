@@ -101,6 +101,7 @@ export default function App() {
                 <Route path="/verify-mobile" element={<VerifyMobile />} />
                 <Route path="/membership" element={<Membership />} />
                 <Route path="/onboarding" element={<Navigate to="/profile" replace />} />
+                <Route path="/support-view" element={<Navigate to="/" replace />} />
                 <Route path="/profile" element={<MyProfile />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/notifications" element={<Notifications />} />

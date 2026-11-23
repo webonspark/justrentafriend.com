@@ -79,6 +79,11 @@ module.exports = (sequelize) => {
          Customer was relying on; three means suspension. Notes are internal
          and never shown to the member. */
       strikeCount: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+
+      /* "Allow support to view my account". Only the member can switch it
+         on, and it lapses by itself; until then staff cannot open the
+         read-only view of their account. */
+      supportAccessUntil: { type: DataTypes.DATE, allowNull: true },
       adminNotes: { type: DataTypes.TEXT, allowNull: true },
 
       /* Deleting an account starts a 30-day grace period rather than wiping
@@ -116,6 +121,11 @@ module.exports = (sequelize) => {
     return new Date(this.membershipExpiresAt).getTime() > Date.now();
   };
 
+  /** True while the member's "allow support to view my account" is on. */
+  User.prototype.allowsSupportAccess = function allowsSupportAccess() {
+    return Boolean(this.supportAccessUntil) && new Date(this.supportAccessUntil).getTime() > Date.now();
+  };
+
   User.prototype.canTransact = function canTransact() {
     return this.status === "active" && this.isMemberActive();
   };
@@ -136,6 +146,7 @@ module.exports = (sequelize) => {
       membershipExpiresAt: this.membershipExpiresAt,
       kycStatus: this.kycStatus,
       memberActive: this.isMemberActive(),
+      supportAccessUntil: this.supportAccessUntil && new Date(this.supportAccessUntil) > new Date() ? this.supportAccessUntil : null,
       createdAt: this.createdAt,
     };
   };

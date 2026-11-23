@@ -5,66 +5,208 @@ import { Link, useParams } from "react-router-dom";
 import { adminApi } from "../../services/api";
 import { dateOnly, dateTime, inr } from "../../lib/format";
 import { Alert, Badge, Button, Card, Field } from "../../components/ui";
-import { AdminTable, Facts, Loader, PageHead, Pager, Select, StatusBadge, errText, readOnly, useAdmin, useConfirm, useLoad } from "./shared";
+import { AdminTable, Facts, Loader, PageHead, Select, StatusBadge, errText, readOnly, useAdmin, useConfirm, useLoad } from "./shared";
 
 /** Every member, searchable, and one member in full. */
 
+const EMPTY_FILTERS = {
+  role: "", status: "", kyc: "", approval: "", emailVerified: "", mobileVerified: "", supportAccess: "",
+  city: "", idFrom: "", idTo: "", joinedFrom: "", joinedTo: "",
+};
+
+const COLUMNS = [
+  ["id", "ID", true],
+  ["name", "Name", true],
+  ["email", "Email"],
+  ["mobile", "Mobile"],
+  ["role", "Role"],
+  ["status", "Status"],
+  ["kyc", "KYC"],
+  ["area", "City / area"],
+  ["strikes", "Strikes"],
+  ["support", "Support access"],
+  ["joined", "Joined", true],
+  ["lastLogin", "Last sign-in", true],
+];
+
 export function Members() {
-  const [filters, setFilters] = useState({ role: "", status: "", q: "", page: 1 });
   const [q, setQ] = useState("");
-  const set = (k) => (v) => setFilters((f) => ({ ...f, [k]: v, page: 1 }));
-  const qs = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== "")).toString();
-  const state = useLoad(() => adminApi.get(`/users?${qs}`), [qs]);
+  const [keyword, setKeyword] = useState("");
+  const [draft, setDraft] = useState(EMPTY_FILTERS);
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [showFilters, setShowFilters] = useState(false);
+  const [sort, setSort] = useState({ by: "joined", dir: "desc" });
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState("20");
+  const [exporting, setExporting] = useState(false);
+  const [problem, setProblem] = useState("");
+
+  const params = { ...filters, q: keyword, sort: sort.by, dir: sort.dir };
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "")).toString();
+  const state = useLoad(() => adminApi.get(`/users?${qs}&page=${page}&limit=${perPage}`), [qs, page, perPage]);
+
+  const active = Object.entries(filters).filter(([, v]) => v !== "");
+  const apply = () => { setFilters(draft); setPage(1); setShowFilters(false); };
+  const clearAll = () => { setDraft(EMPTY_FILTERS); setFilters(EMPTY_FILTERS); setKeyword(""); setQ(""); setPage(1); };
+  const drop = (k) => { const next = { ...filters, [k]: "" }; setFilters(next); setDraft(next); setPage(1); };
+  const setD = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target ? e.target.value : e }));
+  const sortBy = (by) => setSort((s) => ({ by, dir: s.by === by && s.dir === "desc" ? "asc" : "desc" }));
+
+  const exportCsv = async () => {
+    setExporting(true);
+    setProblem("");
+    try {
+      const url = await adminApi.fileUrl(`/users?${qs}&format=csv`);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `members-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      setProblem(errText(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const total = state.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / Number(perPage)));
+  const LABELS = { role: "Role", status: "Status", kyc: "KYC", approval: "Approval", emailVerified: "Email verified", mobileVerified: "Mobile verified", supportAccess: "Support access", city: "City/area", idFrom: "ID from", idTo: "ID to", joinedFrom: "Joined from", joinedTo: "Joined to" };
 
   return (
     <>
       <PageHead title="Members" sub="Customers and Companions." />
-      <form
-        className="mb-4 flex flex-wrap gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          set("q")(q.trim());
-        }}
-      >
-        <input className="k-input" style={{ maxWidth: 280 }} placeholder="Name, email or mobile" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" />
-        <Button type="submit" variant="outline">Search</Button>
-        <Select label="Role" value={filters.role} onChange={set("role")} options={[["", "All roles"], ["customer", "Customers"], ["companion", "Companions"]]} />
-        <Select
-          label="Status"
-          value={filters.status}
-          onChange={set("status")}
-          options={[["", "Any status"], ["active", "Active"], ["pending", "Unverified"], ["warned", "Warned"], ["suspended", "Suspended"], ["banned", "Banned"], ["deleted", "Deleted"]]}
-        />
-      </form>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); setKeyword(q.trim()); setPage(1); }}>
+          <input className="k-input" style={{ width: 300 }} placeholder="Search by name, email or mobile" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search members" />
+          <Button type="submit" variant="outline">Search</Button>
+        </form>
+        <div className="ml-auto flex gap-2">
+          <Button variant={showFilters ? "primary" : "outline"} onClick={() => { setDraft(filters); setShowFilters((v) => !v); }}>
+            Filters{active.length ? ` (${active.length})` : ""}
+          </Button>
+          <Button variant="outline" loading={exporting} onClick={exportCsv}>Export CSV</Button>
+        </div>
+      </div>
+
+      {(active.length > 0 || keyword) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-muted">Active filters:</span>
+          {keyword && <Chip onRemove={() => { setKeyword(""); setQ(""); }}>Keyword: {keyword}</Chip>}
+          {active.map(([k, v]) => <Chip key={k} onRemove={() => drop(k)}>{LABELS[k]}: {v}</Chip>)}
+          <button type="button" className="ml-auto text-sm underline" onClick={clearAll}>Clear all</button>
+        </div>
+      )}
+
+      {showFilters && (
+        <Card className="mb-4">
+          <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Range label="ID" from={draft.idFrom} to={draft.idTo} onFrom={setD("idFrom")} onTo={setD("idTo")} type="number" />
+            <Range label="Joined" from={draft.joinedFrom} to={draft.joinedTo} onFrom={setD("joinedFrom")} onTo={setD("joinedTo")} type="date" />
+            <Pick label="Role" value={draft.role} onChange={setD("role")} options={[["", "Any"], ["customer", "Customer"], ["companion", "Companion"]]} />
+            <Pick label="Status" value={draft.status} onChange={setD("status")} options={[["", "Any"], ["active", "Active"], ["pending", "Unverified"], ["warned", "Warned"], ["suspended", "Suspended"], ["banned", "Banned"], ["deleted", "Deleted"]]} />
+            <Pick label="KYC" value={draft.kyc} onChange={setD("kyc")} options={[["", "Any"], ["none", "Not started"], ["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"]]} />
+            <Pick label="Profile approval" value={draft.approval} onChange={setD("approval")} options={[["", "Any"], ["draft", "Draft"], ["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"]]} />
+            <Pick label="Email verified" value={draft.emailVerified} onChange={setD("emailVerified")} options={[["", "Any"], ["yes", "Yes"], ["no", "No"]]} />
+            <Pick label="Mobile verified" value={draft.mobileVerified} onChange={setD("mobileVerified")} options={[["", "Any"], ["yes", "Yes"], ["no", "No"]]} />
+            <Pick label="Support access" value={draft.supportAccess} onChange={setD("supportAccess")} options={[["", "Any"], ["yes", "Allowed now"]]} />
+            <label className="text-sm">
+              <span className="mb-1 block font-semibold">City / area</span>
+              <input className="k-input" value={draft.city} onChange={setD("city")} />
+            </label>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setShowFilters(false)}>Cancel</Button>
+            <Button onClick={apply}>Apply filters</Button>
+          </div>
+        </Card>
+      )}
+
+      <Alert>{problem}</Alert>
+      <div className="mb-2 flex flex-wrap items-center gap-3 text-sm">
+        <span>{total} records found</span>
+        <span className="ml-auto flex items-center gap-2">
+          <Select label="Per page" value={perPage} onChange={(v) => { setPerPage(v); setPage(1); }} options={[["20", "20"], ["50", "50"], ["100", "100"], ["200", "200"]]} />
+          per page
+          <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>‹</Button>
+          {page} of {pages}
+          <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>›</Button>
+        </span>
+      </div>
+
       <Loader state={state} empty={state.data?.users.length === 0} emptyTitle="No members match">
         {state.data && (
-          <>
-            <AdminTable>
-              <thead>
-                <tr><th>Name</th><th>Role</th><th>Status</th><th>Membership</th><th>KYC</th><th>Area</th><th>Joined</th></tr>
-              </thead>
-              <tbody>
-                {state.data.users.map((u) => (
-                  <tr key={u.id}>
-                    <td>
-                      <Link to={`/admin/members/${u.id}`}>{u.name}</Link>
-                      <div className="text-xs text-muted">{u.email}</div>
-                    </td>
-                    <td className="capitalize">{u.role}{u.verified && " ✓"}</td>
-                    <td><StatusBadge value={u.status} /></td>
-                    <td><StatusBadge value={u.membershipStatus} /></td>
-                    <td><StatusBadge value={u.role === "companion" ? u.kycStatus : null} /></td>
-                    <td>{u.area || "—"}</td>
-                    <td>{dateOnly(u.createdAt)}</td>
-                  </tr>
+          <AdminTable>
+            <thead>
+              <tr>
+                {COLUMNS.map(([key, label, sortable]) => (
+                  <th key={key}>
+                    {sortable ? (
+                      <button type="button" className="font-semibold" onClick={() => sortBy(key)}>
+                        {label} {sort.by === key ? (sort.dir === "asc" ? "↑" : "↓") : ""}
+                      </button>
+                    ) : label}
+                  </th>
                 ))}
-              </tbody>
-            </AdminTable>
-            <Pager page={filters.page} total={state.data.total} onPage={(p) => setFilters((f) => ({ ...f, page: p }))} />
-          </>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.data.users.map((u) => (
+                <tr key={u.id}>
+                  <td>{u.id}</td>
+                  <td><Link to={`/admin/members/${u.id}`}>{u.name}</Link></td>
+                  <td className="text-xs">{u.email} {!u.emailVerified && <Badge tone="warn">unverified</Badge>}</td>
+                  <td className="text-xs">{u.mobile} {!u.mobileVerified && <Badge tone="warn">unverified</Badge>}</td>
+                  <td className="capitalize">{u.role}{u.verified && " ✓"}</td>
+                  <td><StatusBadge value={u.status} /></td>
+                  <td><StatusBadge value={u.role === "companion" ? u.kycStatus : null} /></td>
+                  <td>{[u.city, u.area].filter(Boolean).join(" / ") || "—"}</td>
+                  <td>{u.strikeCount || 0}</td>
+                  <td>{u.supportAccessUntil ? <Badge tone="good">until {dateTime(u.supportAccessUntil)}</Badge> : <span className="text-muted">No</span>}</td>
+                  <td>{dateOnly(u.createdAt)}</td>
+                  <td>{dateTime(u.lastLoginAt)}</td>
+                  <td><Link to={`/admin/members/${u.id}`}>Edit</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </AdminTable>
         )}
       </Loader>
     </>
+  );
+}
+
+function Chip({ children, onRemove }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-ink-line px-2 py-0.5">
+      {children}
+      <button type="button" aria-label="Remove filter" onClick={onRemove} className="text-muted">×</button>
+    </span>
+  );
+}
+
+function Range({ label, from, to, onFrom, onTo, type }) {
+  return (
+    <div className="text-sm">
+      <span className="mb-1 block font-semibold">{label}</span>
+      <div className="flex gap-2">
+        <input className="k-input" type={type} placeholder="from" aria-label={`${label} from`} value={from} onChange={onFrom} />
+        <input className="k-input" type={type} placeholder="to" aria-label={`${label} to`} value={to} onChange={onTo} />
+      </div>
+    </div>
+  );
+}
+
+function Pick({ label, value, onChange, options }) {
+  return (
+    <label className="text-sm">
+      <span className="mb-1 block font-semibold">{label}</span>
+      <select className="k-input" value={value} onChange={onChange}>
+        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    </label>
   );
 }
 
@@ -150,6 +292,43 @@ function MemberBody({ data, admin, done, setDone, onStatus, ask, reload }) {
       },
     });
 
+  const supportOn = Boolean(m.supportAccessUntil && new Date(m.supportAccessUntil).getTime() > Date.now());
+
+  const viewAsMember = () =>
+    ask({
+      title: `View ${m.name}'s account`,
+      body: "Opens their account in a new tab exactly as they see it, read-only, for 30 minutes. They are told that support viewed their account, and this is written to the audit log.",
+      confirmLabel: "Open view",
+      noteLabel: "Why are you viewing it? (audit log)",
+      requireNote: true,
+      onConfirm: async ({ note }) => {
+        // Open the tab first (inside the click), then point it at the view.
+        const tab = window.open("about:blank", "_blank");
+        try {
+          const r = await adminApi.post(`/users/${m.id}/impersonate`, { reason: note });
+          const hash = new URLSearchParams({ t: r.accessToken, exp: r.expiresAt, by: r.viewer || "Support" }).toString();
+          const url = `${window.location.origin}/support-view#${hash}`;
+          if (tab) tab.location.href = url;
+          else window.open(url, "_blank");
+        } catch (e) {
+          tab?.close();
+          throw e;
+        }
+      },
+    });
+
+  const signOutEverywhere = () =>
+    ask({
+      title: `Sign ${m.name} out everywhere?`,
+      body: "Every device is signed out. They can sign in again with their password.",
+      confirmLabel: "Sign out",
+      noteLabel: "Reason (audit log)",
+      onConfirm: async ({ note }) => {
+        await adminApi.post(`/users/${m.id}/sign-out`, { reason: note });
+        setDone("Signed out on every device.");
+      },
+    });
+
   const sendReset = () =>
     ask({
       title: "Send a password reset code?",
@@ -173,12 +352,15 @@ function MemberBody({ data, admin, done, setDone, onStatus, ask, reload }) {
           ))}
       </PageHead>
       <Alert tone="good">{done}</Alert>
-      {canEdit && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={() => setEditing(true)}>Edit profile</Button>
-          <Button size="sm" variant="ghost" onClick={sendReset}>Send password reset</Button>
-        </div>
-      )}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="outline" disabled={!supportOn} onClick={viewAsMember} title={supportOn ? "" : "The member has not allowed support access"}>
+          Login as member (read-only)
+        </Button>
+        {canEdit && <Button size="sm" variant="outline" onClick={() => setEditing(true)}>Edit profile</Button>}
+        {canEdit && <Button size="sm" variant="ghost" onClick={sendReset}>Send password reset</Button>}
+        {canEdit && <Button size="sm" variant="ghost" onClick={signOutEverywhere}>Sign out everywhere</Button>}
+        {!supportOn && <span className="text-xs text-muted">“Login as member” needs the member to switch on <em>Allow support to view my account</em> in their Settings (lasts 24 h).</span>}
+      </div>
 
       <div className="mb-6 grid gap-4 xl:grid-cols-2">
         <Card>
@@ -189,6 +371,7 @@ function MemberBody({ data, admin, done, setDone, onStatus, ask, reload }) {
               ["Email", <span key="e">{m.email} <Badge tone={m.emailVerified ? "good" : "warn"}>{m.emailVerified ? "verified" : "unverified"}</Badge>{isSuper && <button type="button" className="ml-2 text-xs underline" onClick={() => changeContact("email")}>change</button>}</span>],
               ["Mobile", <span key="mo">{m.mobile} <Badge tone={m.mobileVerified ? "good" : "warn"}>{m.mobileVerified ? "verified" : "unverified"}</Badge>{isSuper && <button type="button" className="ml-2 text-xs underline" onClick={() => changeContact("mobile")}>change</button>}</span>],
               ["Age", m.age],
+              ["Support access", supportOn ? <Badge key="sa" tone="good">Allowed until {dateTime(m.supportAccessUntil)}</Badge> : "Not allowed"],
               ["Membership", <span key="m"><StatusBadge value={m.membershipStatus} /> {m.membershipExpiresAt && `until ${dateOnly(m.membershipExpiresAt)}`}</span>],
               ["Last sign-in", dateTime(m.lastLoginAt)],
               ["City / area", `${m.city || "—"} / ${m.area || "—"}`],
@@ -251,6 +434,8 @@ function MemberBody({ data, admin, done, setDone, onStatus, ask, reload }) {
         />
       )}
 
+      <Activity userId={m.id} />
+
       <div className="grid gap-4 xl:grid-cols-2">
         <Section title="Bookings" rows={data.bookings} head={["#", "Side", "Status", "When", "Amount"]} row={(b) => [<Link key="l" to={`/admin/bookings/${b.id}`}>{b.id}</Link>, b.side, <StatusBadge key="s" value={b.status} />, dateTime(b.startAt), inr(b.amountPaise)]} />
         <Section title="Reports against" rows={data.reportsAgainst} head={["#", "Reason", "Status", "Filed"]} row={(r) => [r.id, r.reason.replace(/_/g, " "), <StatusBadge key="s" value={r.status} />, dateOnly(r.createdAt)]} />
@@ -259,6 +444,47 @@ function MemberBody({ data, admin, done, setDone, onStatus, ask, reload }) {
         <Section title="KYC documents" rows={data.kyc} head={["Type", "Number", "Status", "Submitted"]} row={(k) => [k.docType, k.numberMasked, <StatusBadge key="s" value={k.status} />, dateOnly(k.createdAt)]} />
       </div>
     </>
+  );
+}
+
+const KIND_LABELS = {
+  "": "Everything", sign_in: "Sign-ins", booking: "Bookings", payment: "Payments", chat: "Chat", review: "Reviews",
+  report: "Reports", dispute: "Problems raised", photo: "Photos", kyc: "ID checks", sos: "SOS", membership: "Membership",
+  staff: "Staff actions", account: "Account",
+};
+
+/** Everything the member has done, newest first, plus staff actions on them. */
+function Activity({ userId }) {
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState("");
+  const state = useLoad(() => (open ? adminApi.get(`/users/${userId}/activity`) : Promise.resolve(null)), [userId, open]);
+  const events = (state.data?.events || []).filter((e) => !kind || e.kind === kind);
+
+  return (
+    <Card className="mb-6">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h2 className="m-0 text-base">Activity</h2>
+        {open && <Select label="Show" value={kind} onChange={setKind} options={Object.entries(KIND_LABELS)} />}
+        {!open && <Button size="sm" variant="outline" onClick={() => setOpen(true)}>Show activity</Button>}
+        {open && state.data && <span className="ml-auto text-xs text-muted">{events.length} of {state.data.total} events · chat shows counts only, never message text</span>}
+      </div>
+      {open && (
+        <Loader state={state} empty={events.length === 0} emptyTitle="No activity">
+          <ol className="m-0 max-h-[480px] list-none overflow-y-auto p-0">
+            {events.map((e, i) => (
+              <li key={i} className="flex gap-3 border-b border-ink-line py-2 text-sm last:border-0">
+                <span className="w-36 shrink-0 text-xs text-muted">{dateTime(e.at)}</span>
+                <Badge tone={e.kind === "staff" ? "accent" : ["report", "dispute", "sos"].includes(e.kind) ? "warn" : "plain"}>{KIND_LABELS[e.kind] || e.kind}</Badge>
+                <span className="min-w-0 flex-1">
+                  {e.link ? <Link to={e.link}>{e.text}</Link> : e.text}
+                  {e.detail && <span className="block truncate text-xs text-muted">{e.detail}</span>}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </Loader>
+      )}
+    </Card>
   );
 }
 

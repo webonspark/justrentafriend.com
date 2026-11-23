@@ -40,6 +40,20 @@ async function requireAuth(req, res, next) {
     }
     if (user.status === "deleted") throw unauthorized();
 
+    if (claims.imp) {
+      // Staff viewing this account: read-only, and only while the member's
+      // permission lasts and the staff account is still active.
+      const admin = await AdminUser.findByPk(claims.imp);
+      if (!admin || !admin.isActive) throw unauthorized();
+      if (!user.allowsSupportAccess()) throw unauthorized("The member has switched off support access.");
+      if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+        const err = forbidden("This is a read-only support view. Nothing can be changed from here.");
+        err.code = "read_only_view";
+        throw err;
+      }
+      req.impersonatedBy = admin;
+    }
+
     req.user = user;
     return next();
   } catch (err) {
@@ -132,9 +146,11 @@ async function optionalAuth(req, res, next) {
 
   try {
     const claims = verifyAccessToken(token);
-    if (claims.kind === "user") {
+    // A staff read-only view counts as signed in only for reads.
+    const readOnlyOk = !claims.imp || ["GET", "HEAD", "OPTIONS"].includes(req.method);
+    if (claims.kind === "user" && readOnlyOk) {
       const user = await User.findByPk(claims.sub);
-      if (user && !["banned", "deleted"].includes(user.status)) req.user = user;
+      if (user && !["banned", "deleted"].includes(user.status) && (!claims.imp || user.allowsSupportAccess())) req.user = user;
     }
   } catch {
     // A bad token on an optional route is simply a visitor.

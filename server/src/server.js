@@ -107,7 +107,7 @@ async function start() {
   io.use((socket, next) => {
     try {
       const claims = verifyAccessToken(socket.handshake.auth?.token || "");
-      if (claims.kind !== "user") return next(new Error("unauthorized"));
+      if (claims.kind !== "user" || claims.imp) return next(new Error("unauthorized"));
       socket.data.userId = claims.sub;
       return next();
     } catch {

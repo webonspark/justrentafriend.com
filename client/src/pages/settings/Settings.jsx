@@ -14,6 +14,7 @@ export default function Settings() {
       <h1 className="mb-6 text-[2rem]">Settings</h1>
       <div className="grid gap-6 lg:grid-cols-2">
         <Notifications />
+        <SupportAccess />
         <EmergencyContact />
         <Password />
         <Blocked />
@@ -44,6 +45,50 @@ function Notifications() {
       <p className="mb-3 text-sm text-muted">In-app notifications are always on. Booking requests, confirmations, reminders and payments also go by SMS / WhatsApp and push.</p>
       <label className="mb-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={p.emailNotifications} onChange={() => toggle("emailNotifications")} /> Email me as well</label>
       <label className="mb-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={p.showOnlineStatus} onChange={() => toggle("showOnlineStatus")} /> Show when I was last active</label>
+      <Alert tone={msg.tone}>{msg.text}</Alert>
+    </Card>
+  );
+}
+
+/**
+ * Lets our support team open a read-only view of this account for 24 hours —
+ * useful when someone needs help and it is easier to see what they see.
+ */
+function SupportAccess() {
+  const { user, setUser } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [msg, say] = useMessage();
+  const until = user?.supportAccessUntil ? new Date(user.supportAccessUntil) : null;
+  const on = Boolean(until && until.getTime() > Date.now());
+
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      const r = await api.setSupportAccess(!on);
+      setUser((u) => ({ ...u, supportAccessUntil: r.supportAccessUntil }));
+      say("good", !on ? "Support access is on for 24 hours." : "Support access is off.");
+    } catch (e) {
+      say("bad", e instanceof ApiError ? e.message : "Could not save that.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <h2 className="mb-3 text-lg">Help from our support team</h2>
+      <label className="mb-2 flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-1" checked={on} disabled={busy} onChange={toggle} />
+        <span>
+          <strong>Allow support to view my account</strong>
+          <br />
+          <span className="text-muted">
+            For 24 hours, our team can see your account exactly as you do, to help with a problem. They cannot change anything, send messages,
+            book or pay as you, and they never see your password. You are told each time they look, and you can switch this off at any time.
+          </span>
+        </span>
+      </label>
+      {on && <p className="mb-0 text-xs text-muted">On until {until.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}.</p>}
       <Alert tone={msg.tone}>{msg.text}</Alert>
     </Card>
   );

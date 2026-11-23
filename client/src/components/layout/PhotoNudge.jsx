@@ -22,7 +22,7 @@ function dismissedRecently() {
  * and links straight to where photos are added. Dismissible for three days.
  */
 export default function PhotoNudge() {
-  const { user } = useAuth();
+  const { user, supportView } = useAuth();
   const { pathname } = useLocation();
   const [needsPhoto, setNeedsPhoto] = useState(false);
   const [hidden, setHidden] = useState(dismissedRecently);
@@ -45,7 +45,7 @@ export default function PhotoNudge() {
     // Re-check when they come back from the profile page after uploading.
   }, [user, hidden, onProfile]);
 
-  if (!user || hidden || onProfile || !needsPhoto) return null;
+  if (!user || supportView || hidden || onProfile || !needsPhoto) return null;
 
   const isCompanion = user.role === "companion";
   const dismiss = () => {

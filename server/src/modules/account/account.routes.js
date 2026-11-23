@@ -14,6 +14,7 @@ const { logger } = require("../../lib/logger");
  *
  *   GET    /account/preferences
  *   PUT    /account/preferences
+ *   PUT    /account/support-access   { allow }  let staff view my account for 24 h
  *   DELETE /account               delete my account (30-day grace period)
  *
  * Deleting is required by the Play Store, the App Store and the DPDP Act.
@@ -43,6 +44,25 @@ router.put(
     for (const k of PREFS) if (req.body[k] !== undefined) patch[k] = req.body[k];
     await p.update(patch);
     res.json(Object.fromEntries(PREFS.map((k) => [k, p[k]])));
+  })
+);
+
+/**
+ * "Allow support to view my account" — the member's permission for staff
+ * to open a read-only view of their account, for 24 hours. Only the member
+ * can switch it on; switching it off ends any view in progress.
+ */
+const SUPPORT_ACCESS_HOURS = 24;
+router.put(
+  "/support-access",
+  wrap(async (req, res) => {
+    const allow = req.body.allow === true;
+    const until = allow ? new Date(Date.now() + SUPPORT_ACCESS_HOURS * 3600e3) : null;
+    await req.user.update({ supportAccessUntil: until });
+    await require("../../lib/audit").record(req, {
+      action: allow ? "support_access.granted" : "support_access.revoked", entityType: "user", entityId: req.user.id, detail: allow ? `until ${until.toISOString()}` : null,
+    });
+    res.json({ supportAccessUntil: until });
   })
 );
 

@@ -4,6 +4,7 @@ import Navbar from "./Navbar";
 import Footer from "./Footer";
 import BottomNav from "./BottomNav";
 import PhotoNudge from "./PhotoNudge";
+import SupportViewBanner from "./SupportViewBanner";
 
 /**
  * The frame every page sits in.
@@ -26,6 +27,7 @@ export default function Layout({ bare = false }) {
         Skip to content
       </a>
 
+      <SupportViewBanner />
       <Navbar />
       <PhotoNudge />
 

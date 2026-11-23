@@ -15,6 +15,13 @@ let accessToken = null;
 let onSignedOut = null;
 
 export const setAccessToken = (t) => { accessToken = t; };
+
+/* Staff "view as member": a read-only token, kept for this tab only. While
+   it is set, nothing is ever sent that would change data, and the tab never
+   falls back to a member session cookie the browser may also hold. */
+let readOnlyView = false;
+export const setReadOnlyView = (on) => { readOnlyView = Boolean(on); };
+export const isReadOnlyView = () => readOnlyView;
 export const getAccessToken = () => accessToken;
 export const onUnauthorized = (fn) => { onSignedOut = fn; };
 
@@ -62,6 +69,9 @@ export const getAdminToken = () => adminToken;
 
 async function request(path, { method = "GET", body, retry = true, raw = false } = {}) {
   const isAdmin = path.startsWith("/admin") && !path.startsWith("/admin/auth/login");
+  if (readOnlyView && !isAdmin && method !== "GET") {
+    throw new ApiError("This is a read-only support view. Nothing can be changed from here.", { status: 403, code: "read_only_view" });
+  }
   const token = isAdmin ? adminToken : accessToken;
   const isForm = typeof FormData !== "undefined" && body instanceof FormData;
   const headers = isForm ? {} : { "Content-Type": "application/json" };
@@ -81,7 +91,10 @@ async function request(path, { method = "GET", body, retry = true, raw = false }
 
   /* An expired access token is ordinary, not an error: get a new one with
      the cookie and send the request again, once. */
-  if (response.status === 401 && retry && !path.startsWith("/auth/refresh") && !path.startsWith("/admin/auth/")) {
+  if (response.status === 401 && readOnlyView && !isAdmin) {
+    accessToken = null;
+    onSignedOut?.();
+  } else if (response.status === 401 && retry && !path.startsWith("/auth/refresh") && !path.startsWith("/admin/auth/")) {
     try {
       if (isAdmin) {
         const r = await fetch(`${BASE}/admin/auth/refresh`, { method: "POST", credentials: "include" });
@@ -194,6 +207,7 @@ export const api = {
   readNotification: (id) => request(`/notifications/${id}/read`, { method: "POST" }),
   preferences: () => request("/account/preferences"),
   savePreferences: (body) => request("/account/preferences", { method: "PUT", body }),
+  setSupportAccess: (allow) => request("/account/support-access", { method: "PUT", body: { allow } }),
   deleteAccount: (password) => request("/account", { method: "DELETE", body: { password } }),
 
   /** Trades the refresh cookie for a session on page load. */

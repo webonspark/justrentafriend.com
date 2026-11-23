@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { api, setAccessToken, onUnauthorized } from "../services/api";
+import { api, setAccessToken, onUnauthorized, setReadOnlyView } from "../services/api";
 import { connectSocket, disconnectSocket } from "../lib/socket";
 
 /**
@@ -12,14 +12,68 @@ import { connectSocket, disconnectSocket } from "../lib/socket";
 
 const AuthContext = createContext(null);
 
+/* Staff "view as member" sessions live in this tab only (sessionStorage).
+   The admin panel opens /support-view#t=…&exp=…&by=… in a new tab; the hash
+   never reaches a server and is wiped from the address bar straight away. */
+const VIEW_KEY = "supportView";
+
+function takeSupportView() {
+  try {
+    if (window.location.pathname === "/support-view" && window.location.hash.length > 1) {
+      const h = new URLSearchParams(window.location.hash.slice(1));
+      const view = { token: h.get("t"), expiresAt: h.get("exp"), viewer: h.get("by") || "Support" };
+      window.history.replaceState(null, "", "/");
+      if (view.token) sessionStorage.setItem(VIEW_KEY, JSON.stringify(view));
+    }
+    const saved = JSON.parse(sessionStorage.getItem(VIEW_KEY) || "null");
+    if (saved && new Date(saved.expiresAt).getTime() > Date.now()) return saved;
+    sessionStorage.removeItem(VIEW_KEY);
+  } catch {
+    /* storage blocked: no support view */
+  }
+  return null;
+}
+
+export function endSupportView() {
+  try {
+    sessionStorage.removeItem(VIEW_KEY);
+  } catch {
+    /* ignore */
+  }
+  setReadOnlyView(false);
+  setAccessToken(null);
+  window.close();
+  // If the browser refuses to close a tab it did not open, go home signed out.
+  window.location.replace("/");
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
+  const [supportView, setSupportView] = useState(null);
 
   useEffect(() => {
     let alive = true;
 
     (async () => {
+      const view = takeSupportView();
+      if (view) {
+        // Read-only staff view: the given token only, no cookie, no live socket.
+        setReadOnlyView(true);
+        setAccessToken(view.token);
+        try {
+          const { user: viewed } = await api.me();
+          if (alive) {
+            setSupportView(view);
+            setUser(viewed);
+          }
+        } catch {
+          endSupportView();
+        } finally {
+          if (alive) setReady(true);
+        }
+        return;
+      }
       try {
         const restored = await api.restore();
         connectSocket();
@@ -78,6 +132,10 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    if (supportView) {
+      endSupportView();
+      return;
+    }
     try {
       await api.logout();
     } finally {
@@ -85,7 +143,7 @@ export function AuthProvider({ children }) {
       disconnectSocket();
       setUser(null);
     }
-  }, []);
+  }, [supportView]);
 
   const refreshUser = useCallback(async () => {
     const { user: latest } = await api.me();
@@ -110,8 +168,9 @@ export function AuthProvider({ children }) {
       confirmEmail,
       refreshUser,
       setUser,
+      supportView,
     }),
-    [user, ready, signIn, signInWithGoogle, signInWithOtp, signOut, confirmEmail, refreshUser]
+    [user, ready, signIn, signInWithGoogle, signInWithOtp, signOut, confirmEmail, refreshUser, supportView]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

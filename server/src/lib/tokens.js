@@ -27,6 +27,21 @@ function signAccessToken(account, kind = "user") {
   );
 }
 
+/**
+ * A read-only "view as member" token for staff. It is an ordinary member
+ * token plus `imp` (the staff id): the auth middleware refuses every
+ * request that would change anything, and it lasts 30 minutes with no
+ * refresh token behind it.
+ */
+const IMPERSONATION_MINUTES = 30;
+function signImpersonationToken(user, admin) {
+  return jwt.sign(
+    { sub: user.id, kind: "user", role: user.role, imp: admin.id },
+    env.auth.accessSecret,
+    { expiresIn: `${IMPERSONATION_MINUTES}m` }
+  );
+}
+
 function verifyAccessToken(token) {
   return jwt.verify(token, env.auth.accessSecret);
 }
@@ -124,6 +139,8 @@ async function revokeAllForUser(userId) {
 }
 
 module.exports = {
+  IMPERSONATION_MINUTES,
+  signImpersonationToken,
   signAccessToken,
   verifyAccessToken,
   issueRefreshToken,

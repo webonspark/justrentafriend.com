@@ -73,6 +73,26 @@ async function checkSchema() {
   }
 }
 
+/** Columns the models expect that the database does not have yet. */
+async function missingColumns() {
+  const qi = sequelize.getQueryInterface();
+  const out = [];
+  for (const model of Object.values(sequelize.models)) {
+    const table = model.getTableName();
+    let columns;
+    try {
+      columns = await qi.describeTable(table);
+    } catch {
+      out.push(`table ${table}`);
+      continue;
+    }
+    for (const attr of Object.values(model.rawAttributes)) {
+      if (!columns[attr.field]) out.push(`${table}.${attr.field}`);
+    }
+  }
+  return out;
+}
+
 async function start() {
   try {
     await sequelize.authenticate();
@@ -93,6 +113,17 @@ async function start() {
         `Run this first:\n` +
         `    npm run db:migrate     create the tables\n` +
         `    npm run db:seed        add the sample admin, members and bookings`
+    );
+    process.exit(1);
+  }
+
+  // Tables exist, but new code may need columns an older database lacks.
+  const missing = await missingColumns().catch(() => []);
+  if (missing.length) {
+    logger.error(
+      `The database is behind the code — missing: ${missing.slice(0, 8).join(", ")}${missing.length > 8 ? ` and ${missing.length - 8} more` : ""}.\n` +
+        `Run this, then start again (it only adds what is missing; no data is touched):\n` +
+        `    npm run db:migrate`
     );
     process.exit(1);
   }

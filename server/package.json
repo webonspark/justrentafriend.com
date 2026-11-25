@@ -11,7 +11,8 @@
     "db:migrate": "node src/seed/migrate.js",
     "db:seed": "node src/seed/seed.js",
     "db:reset": "node src/seed/migrate.js --force && node src/seed/seed.js",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "whatsapp:test": "node src/seed/whatsapp-test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -26,9 +27,9 @@
     "multer": "^2.0.1",
     "mysql2": "^3.11.0",
     "node-cron": "^3.0.3",
-    "nodemailer": "^6.9.14",
+    "nodemailer": "^10.6.1",
     "sequelize": "^6.37.3",
-    "sharp": "^0.33.4",
+    "sharp": "^0.35.5",
     "socket.io": "^4.7.5",
     "winston": "^3.13.0"
   },

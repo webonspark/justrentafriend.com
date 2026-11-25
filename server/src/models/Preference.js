@@ -20,6 +20,8 @@ module.exports = (sequelize) => {
 
       emailNotifications: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
       showOnlineStatus: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+      // WhatsApp needs the member's own opt-in (WhatsApp Business policy), so it starts off.
+      whatsappReminders: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     },
     { tableName: "preferences" }
   );

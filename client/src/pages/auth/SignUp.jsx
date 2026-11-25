@@ -54,12 +54,16 @@ const EMPTY = {
   dateOfBirth: "",
   password: "",
   acceptedTerms: false,
+  referralCode: "",
 };
 
 export default function SignUp() {
   // Arriving from Google sign-in, the email and name are already known.
-  const prefill = useLocation().state || {};
-  const [form, setForm] = useState({ ...EMPTY, email: prefill.email || "", fullName: prefill.fullName || "" });
+  const location = useLocation();
+  const prefill = location.state || {};
+  // A friend's invite link: /signup?ref=CODE
+  const ref = (new URLSearchParams(location.search).get("ref") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+  const [form, setForm] = useState({ ...EMPTY, email: prefill.email || "", fullName: prefill.fullName || "", referralCode: ref });
   const [errors, setErrors] = useState({});
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
@@ -195,6 +199,14 @@ export default function SignUp() {
             required
           />
           <PasswordMeter checks={strength} />
+
+          <Field
+            label="Referral code (optional)"
+            id="referralCode"
+            value={form.referralCode}
+            onChange={(e) => setForm((f) => ({ ...f, referralCode: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12) }))}
+            hint={form.referralCode ? "You and your friend each get wallet credit after your first meet." : "Got a code from a friend? Enter it here."}
+          />
 
           <label className="mb-6 mt-7 flex cursor-pointer items-start gap-3">
             <input

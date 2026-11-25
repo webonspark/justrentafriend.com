@@ -21,6 +21,8 @@ module.exports = (sequelize) =>
       accuracyM: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
       locationAt: { type: DataTypes.DATE, allowNull: true },
       status: { type: DataTypes.ENUM("active", "resolved"), allowNull: false, defaultValue: "active" },
+      // sos: the member pressed SOS. missed_check_in: no "I'm safe" in time.
+      kind: { type: DataTypes.ENUM("sos", "missed_check_in"), allowNull: false, defaultValue: "sos" },
       resolvedAt: { type: DataTypes.DATE, allowNull: true },
       resolvedNote: { type: DataTypes.STRING(300), allowNull: true },
     },

@@ -38,6 +38,13 @@ module.exports = (sequelize) => {
       failureReason: { type: DataTypes.STRING(200), allowNull: true },
       paidAt: { type: DataTypes.DATE, allowNull: true },
       refundedPaise: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true },
+      /* Bookings only. totalPaise is what the gateway charged; walletPaise
+         came out of the wallet; discountPaise is the coupon. Of refundedPaise,
+         refundedToWalletPaise went back to the wallet instead of the card. */
+      walletPaise: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, defaultValue: 0 },
+      discountPaise: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, defaultValue: 0 },
+      couponId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
+      refundedToWalletPaise: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, defaultValue: 0 },
       invoiceNo: { type: DataTypes.STRING(40), allowNull: true },
     },
     { tableName: "payments",

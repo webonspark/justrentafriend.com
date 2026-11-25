@@ -140,18 +140,26 @@ async function start() {
       const claims = verifyAccessToken(socket.handshake.auth?.token || "");
       if (claims.kind !== "user" || claims.imp) return next(new Error("unauthorized"));
       socket.data.userId = claims.sub;
+      socket.data.fam = claims.fam || null;
       return next();
     } catch {
       return next(new Error("unauthorized"));
     }
   });
-  io.on("connection", (socket) => socket.join(`user:${socket.data.userId}`));
+  io.on("connection", (socket) => {
+    socket.join(`user:${socket.data.userId}`);
+    if (socket.data.fam) socket.join(`fam:${socket.data.fam}`);
+    realtime.connected(socket.data.userId);
+    socket.on("disconnect", () => realtime.disconnected(socket.data.userId));
+  });
   realtime.attach(io);
 
   await sweep().catch((e) => logger.error(`Booking sweep failed: ${e.message}`));
 
   server.listen(env.port, () => {
     logger.info(`${env.brand.name} API on http://localhost:${env.port} (${env.nodeEnv})`);
+    const wa = require("./lib/whatsapp").status();
+    logger.info(wa.ready ? `WhatsApp reminders: on (template "${wa.template}").` : `WhatsApp reminders: ${wa.provider === "meta" ? "NOT configured — set WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID" : "console only"}.`);
     if (env.mail.transport !== "smtp") {
       logger.info("Email is going to this console — OTPs will print here.");
     }

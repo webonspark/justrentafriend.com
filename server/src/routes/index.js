@@ -57,6 +57,8 @@ router.use("/chat", require("../modules/chat/chat.routes"));
 router.use("/safety", require("../modules/safety/safety.routes"));
 router.use("/notifications", require("../modules/notifications/notification.routes"));
 router.use("/account", require("../modules/account/account.routes"));
+router.use("/dashboard", require("../modules/dashboard/dashboard.routes"));
+router.use("/", require("../modules/growth/growth.routes"));
 router.use("/admin/auth", require("../modules/admin/admin.auth"));
 router.use("/admin", require("../modules/admin/admin.routes"));
 

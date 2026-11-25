@@ -7,6 +7,12 @@ import { getAccessToken } from "../services/api";
  * reconnect, so a refreshed token is picked up automatically.
  */
 let socket = null;
+let onEnded = null;
+
+/** Called when staff end this member's sessions (sign out, suspend, ban). */
+export function onSessionEnded(fn) {
+  onEnded = fn;
+}
 
 export function connectSocket() {
   const token = getAccessToken();
@@ -18,6 +24,7 @@ export function connectSocket() {
     auth: (cb) => cb({ token: getAccessToken() }),
     transports: ["websocket", "polling"],
   });
+  socket.on("session:ended", (e) => onEnded?.(e?.reason));
   return socket;
 }
 

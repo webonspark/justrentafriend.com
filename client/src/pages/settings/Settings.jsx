@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
-import { Alert, Button, Card, Field, PasswordField } from "../../components/ui";
+import { Alert, Badge, Button, Card, Field, PasswordField } from "../../components/ui";
 
 /**
  * Settings: notifications, emergency contact, password, blocked people,
@@ -17,6 +17,7 @@ export default function Settings() {
         <SupportAccess />
         <EmergencyContact />
         <Password />
+        <Devices />
         <Blocked />
         <DeleteAccount />
       </div>
@@ -42,8 +43,12 @@ function Notifications() {
   return (
     <Card>
       <h2 className="mb-3 text-lg">Notifications</h2>
-      <p className="mb-3 text-sm text-muted">In-app notifications are always on. Booking requests, confirmations, reminders and payments also go by SMS / WhatsApp and push.</p>
+      <p className="mb-3 text-sm text-muted">In-app notifications are always on. You get a reminder 24 hours and 1 hour before every meet.</p>
       <label className="mb-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={p.emailNotifications} onChange={() => toggle("emailNotifications")} /> Email me as well</label>
+      <label className="mb-2 flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-1" checked={p.whatsappReminders} onChange={() => toggle("whatsappReminders")} />
+        <span>Send my meet reminders on WhatsApp too<span className="block text-xs text-muted">To your verified mobile number. You can switch this off at any time.</span></span>
+      </label>
       <label className="mb-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={p.showOnlineStatus} onChange={() => toggle("showOnlineStatus")} /> Show when I was last active</label>
       <Alert tone={msg.tone}>{msg.text}</Alert>
     </Card>
@@ -147,6 +152,55 @@ function Password() {
       <PasswordField label="New password" id="pw-new" autoComplete="new-password" value={f.newPassword} onChange={(e) => setF({ ...f, newPassword: e.target.value })} hint="At least 8 characters." />
       <Alert tone={msg.tone}>{msg.text}</Alert>
       <Button type="submit" loading={busy}>Change password</Button>
+    </Card>
+  );
+}
+
+/** Where I am signed in, with a way to sign any other device out. */
+function Devices() {
+  const [rows, setRows] = useState(null);
+  const [msg, say] = useMessage();
+  const [busy, setBusy] = useState("");
+  useEffect(() => { api.sessions().then((d) => setRows(d.sessions)).catch(() => setRows([])); }, []);
+  const run = async (key, fn, done) => {
+    setBusy(key);
+    try {
+      const d = await fn();
+      setRows(d.sessions);
+      say("good", done(d));
+    } catch (e) {
+      say("bad", e instanceof ApiError ? e.message : "That did not work. Try again.");
+    } finally {
+      setBusy("");
+    }
+  };
+  const others = (rows || []).filter((r) => !r.current);
+  const when = (d) => new Date(d).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+  return (
+    <Card>
+      <h2 className="mb-1 text-lg">My devices</h2>
+      <p className="mb-3 text-sm text-muted">Where your account is signed in. If you see a device you do not know, sign it out and change your password.</p>
+      {(rows || []).map((r) => (
+        <div key={r.id} className="flex items-center justify-between gap-3 border-b border-ink-line py-2 text-sm">
+          <div>
+            <div className="font-semibold">
+              {r.mobile ? "📱" : "💻"} {r.browser} on {r.os}
+              {r.current && <Badge tone="good" className="ml-2">This device</Badge>}
+            </div>
+            <div className="text-xs text-muted">Signed in {when(r.signedInAt)} · last active {when(r.lastActiveAt)}{r.ip ? ` · IP ${r.ip}` : ""}</div>
+          </div>
+          {!r.current && (
+            <Button size="sm" variant="ghost" loading={busy === r.id} onClick={() => run(r.id, () => api.endSession(r.id), () => "That device is signed out.")}>Sign out</Button>
+          )}
+        </div>
+      ))}
+      {rows && others.length > 0 && (
+        <Button className="mt-3" variant="outline" loading={busy === "all"} onClick={() => run("all", api.endOtherSessions, (d) => `${d.ended} other device${d.ended === 1 ? "" : "s"} signed out.`)}>
+          Sign out all other devices
+        </Button>
+      )}
+      {rows && others.length === 0 && <p className="mt-2 mb-0 text-sm text-muted">You are not signed in anywhere else.</p>}
+      <Alert tone={msg.tone}>{msg.text}</Alert>
     </Card>
   );
 }

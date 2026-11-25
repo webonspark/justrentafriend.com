@@ -44,7 +44,7 @@ export default function Earnings() {
         ))}
       </div>
       <p className="mb-2 text-sm text-muted">
-        Payouts go to {d.payoutAccount ? (d.payoutAccount.method === "upi" ? d.payoutAccount.upiId : `A/C ••••${d.payoutAccount.accountLast4}`) : "—"}. Money is released after each completed meet (when the Customer confirms, or 24 hours after the end with no dispute).
+        Payouts go to {d.payoutAccount ? (d.payoutAccount.method === "upi" ? d.payoutAccount.upiId : `A/C ••••${d.payoutAccount.accountLast4}`) : "—"}. After each meet there is a 24-hour complaint window; if nothing is raised, the payout is released to you.
       </p>
       <h2 className="mb-3 mt-6 text-lg">Payouts</h2>
       {d.payouts.length === 0 ? (

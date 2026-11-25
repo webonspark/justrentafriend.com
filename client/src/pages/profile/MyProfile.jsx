@@ -65,7 +65,8 @@ export default function MyProfile() {
         <Photos me={me} save={save} isCompanion={isCompanion} />
         {isCompanion && <ServicesAndRate me={me} catalog={catalog} save={save} />}
         {isCompanion && <Calendar me={me} save={save} />}
-        {isCompanion && <Verification me={me} save={save} />}
+        {isCompanion && <BookingRules me={me} save={save} />}
+        <Verification me={me} save={save} isCompanion={isCompanion} />
         {isCompanion && <PayoutAccount me={me} save={save} />}
       </div>
     </div>
@@ -305,7 +306,7 @@ function Calendar({ me, save }) {
 
 /* ------------------------------ verification ------------------------------ */
 
-function Verification({ me, save }) {
+function Verification({ me, save, isCompanion }) {
   const [docType, setDocType] = useState("aadhaar");
   const [number, setNumber] = useState("");
   const [busy, setBusy] = useState("");
@@ -333,10 +334,14 @@ function Verification({ me, save }) {
 
   return (
     <Card>
-      <h2 className="mb-1 text-lg">Verification</h2>
-      <p className="mb-4 text-sm text-muted">Needed before you go live and before any payout. Both together earn the Verified badge.</p>
+      <h2 className="mb-1 text-lg">{isCompanion ? "Verification" : "ID verified badge"}</h2>
+      <p className="mb-4 text-sm text-muted">
+        {isCompanion
+          ? "Needed before you go live and before any payout. Both together earn the Verified badge."
+          : "Optional. Companions see an \"ID verified\" badge on your requests, and some only accept verified members. Only the last four digits are kept, and the document is never shown to anyone but our team."}
+      </p>
 
-      <h3 className="mb-2 text-base">1. ID check</h3>
+      <h3 className="mb-2 text-base">{isCompanion ? "1. ID check" : "ID check"}</h3>
       {latest && (
         <p className="mb-3 text-sm">
           {latest.docType.toUpperCase()} {latest.numberMasked} · <Badge tone={kycTone[latest.status]}>{latest.status}</Badge>
@@ -357,6 +362,7 @@ function Verification({ me, save }) {
         </>
       )}
 
+      {isCompanion && <>
       <h3 className="mb-2 mt-6 text-base">2. Selfie check</h3>
       <p className="mb-3 text-sm">
         Status: <Badge tone={{ approved: "good", submitted: "warn", rejected: "plain", none: "plain" }[me.profile.selfieStatus]}>{me.profile.selfieStatus === "none" ? "not done" : me.profile.selfieStatus}</Badge>
@@ -368,6 +374,45 @@ function Verification({ me, save }) {
           <input ref={selfieInput} type="file" accept="image/*" capture="user" hidden onChange={sendSelfie} />
         </>
       )}
+      </>}
+    </Card>
+  );
+}
+
+/* ------------------------------ booking rules ------------------------------ */
+
+/** Companions: "Available now" for same-day meets, and who may book them. */
+function BookingRules({ me, save }) {
+  const [busy, setBusy] = useState("");
+  const until = me.profile.availableNowUntil ? new Date(me.profile.availableNowUntil) : null;
+  const setNow = async (hours) => {
+    setBusy(`now${hours}`);
+    await save(async () => { await api.setAvailableNow(hours); return api.myProfile(); }, hours ? `You show as available now for ${hours} hour${hours === 1 ? "" : "s"}.` : "Available now is off.");
+    setBusy("");
+  };
+  return (
+    <Card>
+      <h2 className="mb-1 text-lg">Availability &amp; who can book</h2>
+      <h3 className="mb-1 mt-3 text-base">Available now</h3>
+      <p className="mb-2 text-sm text-muted">
+        {until ? `On until ${until.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}. You appear first in search with an "Available now" badge.` : "Free today? Switch this on and you appear first in search with an \"Available now\" badge."}
+      </p>
+      <div className="mb-4 flex flex-wrap gap-2">
+        {[1, 2, 3, 6].map((h) => (
+          <Button key={h} size="sm" variant="outline" loading={busy === `now${h}`} onClick={() => setNow(h)}>{h} h</Button>
+        ))}
+        {until && <Button size="sm" variant="ghost" loading={busy === "now0"} onClick={() => setNow(0)}>Turn off</Button>}
+      </div>
+      <p className="mb-2 text-xs text-muted">Customers still book at least two hours ahead, inside your weekly hours.</p>
+      <label className="mt-3 flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={Boolean(me.profile.verifiedCustomersOnly)}
+          onChange={() => save(() => api.updateProfile({ verifiedCustomersOnly: !me.profile.verifiedCustomersOnly }), "Saved.")}
+        />
+        <span>Only accept requests from ID-verified Customers<span className="block text-xs text-muted">Fewer requests, but every Customer has passed an ID check.</span></span>
+      </label>
     </Card>
   );
 }
@@ -377,8 +422,24 @@ function Verification({ me, save }) {
 function PayoutAccount({ me, save }) {
   const acc = me.payoutAccount;
   const [f, setF] = useState({ method: acc?.method || "upi", upiId: acc?.upiId || "", accountName: acc?.accountName || "", accountNumber: "", ifsc: acc?.ifsc || "" });
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [codeSent, setCodeSent] = useState("");
+  const [devCode, setDevCode] = useState("");
+  const [codeProblem, setCodeProblem] = useState("");
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const sendCode = async () => {
+    setBusy("code");
+    setCodeProblem("");
+    try {
+      const r = await api.payoutCode();
+      setCodeSent(r.sentTo);
+      setDevCode(r.devCode || "");
+    } catch (e) {
+      setCodeProblem(e instanceof ApiError ? e.message : "Could not send a code. Try again.");
+    } finally {
+      setBusy("");
+    }
+  };
   return (
     <Card>
       <h2 className="mb-1 text-lg">Payout account</h2>
@@ -398,7 +459,34 @@ function PayoutAccount({ me, save }) {
           <Field label="IFSC" id="ifsc" value={f.ifsc} onChange={set("ifsc")} />
         </>
       )}
-      <Button loading={busy} onClick={async () => { setBusy(true); await save(() => api.savePayoutAccount(f), "Payout account saved."); setBusy(false); }}>Save</Button>
+      {acc && (
+        <div className="mb-3 rounded-lg border border-ink-line p-3 text-sm">
+          <p className="mb-2">For your safety, changing your payout account needs a code. Payouts wait 24 hours after a change.</p>
+          {!codeSent ? (
+            <Button size="sm" variant="outline" loading={busy === "code"} onClick={sendCode}>Send me a code</Button>
+          ) : (
+            <>
+              <p className="mb-2 text-muted">We sent a code to {codeSent}.</p>
+              {devCode && <Alert tone="info">Development mode — your code is <strong>{devCode}</strong>.</Alert>}
+              <Field label="Code" id="payout-code" inputMode="numeric" autoComplete="one-time-code" value={f.code || ""} onChange={set("code")} />
+              <button type="button" className="text-xs underline" onClick={sendCode}>Send a new code</button>
+            </>
+          )}
+          <Alert>{codeProblem}</Alert>
+        </div>
+      )}
+      <Button
+        loading={busy === "save"}
+        disabled={Boolean(acc) && !f.code}
+        onClick={async () => {
+          setBusy("save");
+          const ok = await save(() => api.savePayoutAccount(f), acc ? "Payout account changed. Payouts wait 24 hours after a change." : "Payout account saved.");
+          if (ok) { setCodeSent(""); setDevCode(""); setF((x) => ({ ...x, code: "", accountNumber: "" })); }
+          setBusy("");
+        }}
+      >
+        {acc ? "Change payout account" : "Save"}
+      </Button>
     </Card>
   );
 }

@@ -146,7 +146,7 @@ export function Sos() {
   return (
     <>
       {modal}
-      <PageHead title="SOS alerts" sub="Refreshes every 20 seconds. Call the member first; if unreachable, call 112.">
+      <PageHead title="SOS alerts" sub="SOS presses and missed &quot;I'm safe&quot; check-ins. Refreshes every 20 seconds. Call the member first; if unreachable, call 112.">
         <Select label="Status" value={status} onChange={setStatus} options={[["active", "Active"], ["resolved", "Resolved"]]} />
       </PageHead>
       <Loader state={state} empty={state.data?.alerts.length === 0} emptyTitle={status === "active" ? "No active alerts" : "None"}>
@@ -155,7 +155,7 @@ export function Sos() {
             <Card key={a.id} style={a.status === "active" ? { borderColor: "var(--rose)" } : undefined}>
               <div className="mb-2 flex items-center gap-2">
                 <StatusBadge value={a.status === "active" ? "urgent" : "resolved"} />
-                <strong>SOS #{a.id}</strong>
+                <strong>{a.kind === "missed_check_in" ? `Missed safety check-in #${a.id}` : `SOS #${a.id}`}</strong>
                 <span className="text-xs text-muted">{ago(a.createdAt)}</span>
               </div>
               <p className="mb-1 text-sm">

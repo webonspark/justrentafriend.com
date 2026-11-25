@@ -125,6 +125,7 @@ const mobileFor = (i) => `+9198${String(45000000 + i * 13717).slice(0, 8)}`;
 async function seedSettings() {
   const added = await settings.ensureDefaults();
   logger.info(`Settings ready (${added.length} added).`);
+  await require("../lib/placesDefault").ensureDefaultPlaces(env.brand.city);
 }
 
 async function seedPlans() {
@@ -515,8 +516,28 @@ async function seedExtras(companions, users) {
   logger.info("Photos, KYC, memberships, an approval queue, disputes, reports, SOS and notifications ready.");
 }
 
+/* Sample accounts all share one known password, so a live database must
+   never get them by accident. In production: --base only, and only with a
+   real ADMIN_PASSWORD. --allow-sample-data overrides (a staging copy). */
+function refuseInProduction() {
+  if (env.nodeEnv !== "production" || process.argv.includes("--allow-sample-data")) return;
+  if (!process.argv.includes("--base")) {
+    console.error(
+      "Refusing to add sample members to a production database — every one of them has the password \"Password123\".\n" +
+        "Use:  ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a strong one' npm run db:seed -- --base\n" +
+        "(or add --allow-sample-data if this really is a throwaway test database)."
+    );
+    process.exit(1);
+  }
+  if (!process.env.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD === PASSWORD || process.env.ADMIN_PASSWORD.length < 10) {
+    console.error("In production, set ADMIN_EMAIL and a strong ADMIN_PASSWORD (10+ characters) for the first admin.");
+    process.exit(1);
+  }
+}
+
 (async () => {
   try {
+    refuseInProduction();
     await sequelize.authenticate();
     await sequelize.sync();
 

@@ -14,6 +14,14 @@ import GoogleButton from "../../components/shared/GoogleButton";
  * rather than refused, because that is the one thing standing between them
  * and getting in.
  */
+const ENDED = {
+  signed_out: "You were signed out by our support team. Please log in again.",
+  device_signed_out: "This device was signed out from your account settings. Please log in again.",
+  contact_changed: "Your email or mobile was changed by our support team. Please log in again.",
+  suspended: "Your account has been suspended. Contact support for help.",
+  banned: "This account has been closed.",
+};
+
 export default function Login() {
   const [form, setForm] = useState({ identifier: "", password: "" });
   const [errors, setErrors] = useState({});
@@ -21,6 +29,7 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
 
   const { signIn, signInWithOtp } = useAuth();
+  const ended = new URLSearchParams(useLocation().search).get("ended") || "";
   // "password" or "otp": an SMS code to the mobile instead of a password.
   const [mode, setMode] = useState("password");
   const [otpSent, setOtpSent] = useState(false);
@@ -29,7 +38,7 @@ export default function Login() {
   const location = useLocation();
 
   // Where they were headed before being asked to sign in.
-  const goingTo = location.state?.from?.pathname || "/discover";
+  const goingTo = location.state?.from?.pathname || "/dashboard";
 
   const set = (key) => (e) => {
     setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -79,6 +88,7 @@ export default function Login() {
         <h1 className="mb-3 text-[2rem] sm:text-[2.5rem]">Welcome back</h1>
         <p className="mb-9 text-muted">Log in to {BRAND}.</p>
 
+        {!problem && ended && <Alert tone="info">{ENDED[ended] || ENDED.signed_out}</Alert>}
         <Alert>{problem}</Alert>
 
         <div className="mb-6 flex gap-2">

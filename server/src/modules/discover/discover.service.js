@@ -1,5 +1,5 @@
 const { Op } = require("sequelize");
-const { User, Profile, Photo, ServiceCategory, CompanionRate, Availability, Block } = require("../../models");
+const { User, Profile, Photo, ServiceCategory, CompanionRate, Availability, Block, Interest } = require("../../models");
 const presenter = require("../profiles/profile.presenter");
 const { weekdayOf } = require("../../lib/time");
 
@@ -51,6 +51,7 @@ async function search(viewer, q) {
       { model: ServiceCategory, as: "services", through: { attributes: [] } },
       { model: CompanionRate, as: "rates", where: { isCurrent: true }, required: false },
       { model: Availability, as: "availability" },
+      { model: Interest, as: "interests", through: { attributes: [] } },
     ],
   });
 
@@ -71,11 +72,17 @@ async function search(viewer, q) {
   const minRating = q.minRating ? Number(q.minRating) : null;
   const maxKm = q.maxKm ? Number(q.maxKm) : null;
   const language = q.language ? String(q.language).toLowerCase() : null;
-  const weekday = q.date && /^\d{4}-\d{2}-\d{2}$/.test(q.date) ? weekdayOf(q.date) : null;
+  // "Available today" is the same as a date filter for today, in India time.
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const dateWanted = q.today === "1" || q.today === "true" ? today : q.date;
+  const weekday = dateWanted && /^\d{4}-\d{2}-\d{2}$/.test(dateWanted) ? weekdayOf(dateWanted) : null;
+  const interestIds = String(q.interests || "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const nowOnly = q.availableNow === "1" || q.availableNow === "true";
 
   let cards = rows
     .filter((u) => !serviceId || u.services.some((s) => s.id === serviceId))
     .filter((u) => weekday === null || u.availability.some((a) => a.weekday === weekday))
+    .filter((u) => !interestIds.length || (u.interests || []).some((i) => interestIds.includes(i.id)))
     .map((u) => presenter.card(u, { from }))
     .filter((c) => c.pricePerHourPaise !== null)
     .filter((c) => minPrice === null || c.pricePerHourPaise >= minPrice)
@@ -84,7 +91,8 @@ async function search(viewer, q) {
     .filter((c) => maxAge === null || c.age <= maxAge)
     .filter((c) => minRating === null || c.rating >= minRating)
     .filter((c) => !language || c.languages.some((l) => l.toLowerCase() === language))
-    .filter((c) => maxKm === null || c.distanceKm === null || c.distanceKm <= maxKm);
+    .filter((c) => maxKm === null || c.distanceKm === null || c.distanceKm <= maxKm)
+    .filter((c) => !nowOnly || c.availableNow);
 
   const sort = q.sort || (from ? "distance" : "rating");
   const byDistance = (a, b) => (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9);
@@ -96,6 +104,15 @@ async function search(viewer, q) {
     newest: (a, b) => b.id - a.id,
   };
   cards = cards.sort(sorters[sort] || sorters.rating);
+  // Whoever is available right now goes first, keeping the chosen order otherwise.
+  cards = [...cards.filter((c) => c.availableNow), ...cards.filter((c) => !c.availableNow)];
+
+  // Mark the viewer's favourites.
+  if (viewer) {
+    const favs = await require("../../models").Favorite.findAll({ where: { userId: viewer.id }, attributes: ["companionId"] });
+    const set = new Set(favs.map((f) => f.companionId));
+    cards = cards.map((c) => ({ ...c, favorite: set.has(c.id) }));
+  }
 
   const limit = Math.min(Number(q.limit) || 24, 60);
   const page = Math.max(Number(q.page) || 1, 1);

@@ -7,6 +7,7 @@ const { checkDateOfBirth } = require("../../lib/age");
 const {
   signAccessToken,
   issueRefreshToken,
+  newFamilyId,
   rotateRefreshToken,
   revokeRefreshToken,
   revokeAllForUser,
@@ -95,6 +96,7 @@ async function register(payload, meta = {}) {
       { transaction: t }
     );
     await Preference.create({ userId: created.id }, { transaction: t });
+    if (payload.referralCode) await require("../../lib/referrals").attach(created, payload.referralCode, t);
 
     /* A Companion needs a price before they can be listed. It starts at the
        admin minimum and they set their own during onboarding. */
@@ -220,15 +222,17 @@ async function login({ identifier, password }, meta = {}) {
 async function startSession(user, meta = {}) {
   await user.update({ lastLoginAt: new Date(), lastLoginIp: meta.ip || null });
 
+  const familyId = newFamilyId();
   const refreshToken = await issueRefreshToken(user, {
     kind: "user",
     ip: meta.ip,
     userAgent: meta.userAgent,
+    familyId,
   });
 
   return {
     user: user.toSafeJSON(),
-    accessToken: signAccessToken(user, "user"),
+    accessToken: signAccessToken(user, "user", { fam: familyId }),
     refreshToken,
   };
 }
@@ -410,6 +414,4 @@ module.exports = {
   changePassword,
   refresh,
   logout,
-  tidyEmail,
-  tidyMobile,
 };

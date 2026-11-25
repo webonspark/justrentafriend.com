@@ -24,6 +24,8 @@ export const SECTION_ROLES = {
   reports: ["moderator"],
   sos: ["moderator"],
   reviews: ["moderator"],
+  coupons: ["finance"],
+  places: ["moderator"],
   settings: ["finance"],
   categories: ["moderator"],
   plans: ["finance"],

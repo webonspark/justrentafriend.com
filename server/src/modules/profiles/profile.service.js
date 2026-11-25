@@ -22,6 +22,10 @@ const { isHhMm, toMinutes } = require("../../lib/time");
 const { badRequest, notFound, forbidden } = require("../../lib/errors");
 const { notify } = require("../../lib/notify");
 const presenter = require("./profile.presenter");
+const env = require("../../config/env");
+const { issueOtp, verifyOtp } = require("../../lib/otp");
+const { sendSms } = require("../../lib/messaging");
+const { sendMail } = require("../../lib/mailer");
 
 /**
  * A member's own profile, and a Companion's public one.
@@ -77,6 +81,8 @@ async function getMine(userId) {
       rating: Number(p.ratingAvg),
       ratingCount: p.ratingCount,
       completedMeets: p.completedMeets,
+      verifiedCustomersOnly: Boolean(p.verifiedCustomersOnly),
+      availableNowUntil: p.availableNowUntil && new Date(p.availableNowUntil) > new Date() ? p.availableNowUntil : null,
     },
     photos: user.photos.sort((a, b) => a.position - b.position).map(presenter.photoJson),
     interestIds: user.interests.map((i) => i.id),
@@ -128,6 +134,9 @@ async function updateMine(user, body) {
   const fields = {};
   for (const key of ["gender", "bio", "city", "area", "occupation"]) {
     if (body[key] !== undefined) fields[key] = body[key] === "" ? null : String(body[key]).trim();
+  }
+  if (user.role === "companion" && body.verifiedCustomersOnly !== undefined) {
+    fields.verifiedCustomersOnly = body.verifiedCustomersOnly === true || body.verifiedCustomersOnly === "true";
   }
   if (body.languages !== undefined) {
     const list = Array.isArray(body.languages) ? body.languages : String(body.languages).split(",");
@@ -260,7 +269,7 @@ async function setPrimaryPhoto(user, photoId) {
 /* ------------------------------ verification ------------------------------ */
 
 async function submitKyc(user, { docType, number }, file) {
-  if (user.role !== "companion") throw forbidden("Identity checks are for Companions.");
+  // Companions must pass it to be listed; Customers may, for the "ID verified" badge.
   if (!["aadhaar", "pan"].includes(docType)) throw badRequest("Choose Aadhaar or PAN.");
   if (!file) throw badRequest("Upload a photo of the document.");
 
@@ -308,6 +317,23 @@ async function submitForApproval(user) {
   return getMine(user.id);
 }
 
+/** Where the payout-change code goes: the verified mobile, else the email. */
+const payoutCodeTo = (user) => (user.mobileVerified && user.mobile ? { channel: "sms", to: user.mobile } : { channel: "email", to: user.email });
+
+/** Sends the code needed to change an existing payout account. */
+async function sendPayoutCode(user) {
+  if (user.role !== "companion") throw forbidden("Payouts are for Companions.");
+  const { channel, to } = payoutCodeTo(user);
+  const { code } = await issueOtp({ userId: user.id, destination: to, purpose: "payout_change" });
+  const text = `${code} is your ${env.brand.name} code to change where your payouts go. If you did not ask for this, do not share it and contact support.`;
+  if (channel === "sms") await sendSms(to, text);
+  else await sendMail({ to, subject: `Your ${env.brand.name} payout change code`, text });
+  const masked = channel === "sms" ? `your mobile ending ${to.slice(-4)}` : to.replace(/^(.).*(@.*)$/, "$1•••$2");
+  return { sent: true, sentTo: masked, devCode: env.isProd ? undefined : code };
+}
+
+const describeAccount = (a) => (a.method === "upi" ? `UPI ${a.upiId}` : `bank account ending ${a.accountLast4}`);
+
 async function savePayoutAccount(user, body) {
   if (user.role !== "companion") throw forbidden("Payouts are for Companions.");
   const method = body.method;
@@ -327,8 +353,25 @@ async function savePayoutAccount(user, body) {
     throw badRequest("Choose UPI or bank account.");
   }
   const existing = await PayoutAccount.findOne({ where: { companionId: user.id } });
-  if (existing) await existing.update(row);
-  else await PayoutAccount.create(row);
+  if (!existing) {
+    await PayoutAccount.create(row);
+    return getMine(user.id);
+  }
+
+  // Changing an account needs a code, so a stolen login cannot redirect money.
+  if (!body.code) {
+    const e = badRequest("Enter the code we sent you to confirm this change.");
+    e.code = "code_required";
+    throw e;
+  }
+  await verifyOtp({ destination: payoutCodeTo(user).to, purpose: "payout_change", code: String(body.code).trim() });
+
+  const before = describeAccount(existing);
+  await existing.update({ ...row, changedAt: new Date() });
+  const after = describeAccount(existing);
+  const warning = `Your payout account was changed from ${before} to ${after}. For your safety, payouts wait 24 hours after a change. If this was not you, contact ${env.brand.supportEmail} straight away.`;
+  await notify(user.id, { type: "payout_account_changed", title: "Payout account changed", body: warning, link: "/profile" });
+  await sendMail({ to: user.email, subject: `Your ${env.brand.name} payout account was changed`, text: warning }).catch(() => {});
   return getMine(user.id);
 }
 
@@ -401,7 +444,22 @@ const MEETING_PLACE_TYPES = [
   { id: "landmark", name: "Public landmark" },
 ];
 
+/**
+ * "Available now": a Companion says they can meet today, for the next few
+ * hours. Discovery shows a badge and can filter on it. 0 switches it off.
+ */
+const AVAILABLE_NOW_MAX_HOURS = 12;
+async function setAvailableNow(user, hours) {
+  if (user.role !== "companion") throw forbidden("This is for Companions.");
+  const h = Number(hours);
+  if (!Number.isFinite(h) || h < 0 || h > AVAILABLE_NOW_MAX_HOURS) throw badRequest(`Choose 0 to ${AVAILABLE_NOW_MAX_HOURS} hours.`);
+  const until = h === 0 ? null : new Date(Date.now() + h * 3600e3);
+  await Profile.update({ availableNowUntil: until }, { where: { userId: user.id } });
+  return { availableNowUntil: until };
+}
+
 module.exports = {
+  setAvailableNow,
   getMine,
   updateMine,
   setAvailability,
@@ -412,6 +470,7 @@ module.exports = {
   submitSelfie,
   submitForApproval,
   savePayoutAccount,
+  sendPayoutCode,
   getPublic,
   catalog,
   isBlocked,

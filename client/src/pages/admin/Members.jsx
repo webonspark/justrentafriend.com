@@ -3,18 +3,19 @@ import { Modal } from "react-bootstrap";
 import { api } from "../../services/api";
 import { Link, useParams } from "react-router-dom";
 import { adminApi } from "../../services/api";
-import { dateOnly, dateTime, inr } from "../../lib/format";
+import { ago, dateOnly, dateTime, inr } from "../../lib/format";
 import { Alert, Badge, Button, Card, Field } from "../../components/ui";
-import { AdminTable, Facts, Loader, PageHead, Select, StatusBadge, errText, readOnly, useAdmin, useConfirm, useLoad } from "./shared";
+import { AdminTable, Facts, Loader, PageHead, Select, StatusBadge, can, errText, readOnly, useAdmin, useConfirm, useLoad } from "./shared";
 
 /** Every member, searchable, and one member in full. */
 
 const EMPTY_FILTERS = {
-  role: "", status: "", kyc: "", approval: "", emailVerified: "", mobileVerified: "", supportAccess: "",
+  online: "", role: "", status: "", kyc: "", approval: "", emailVerified: "", mobileVerified: "", supportAccess: "",
   city: "", idFrom: "", idTo: "", joinedFrom: "", joinedTo: "",
 };
 
 const COLUMNS = [
+  ["online", ""],
   ["id", "ID", true],
   ["name", "Name", true],
   ["email", "Email"],
@@ -45,6 +46,13 @@ export function Members() {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "")).toString();
   const state = useLoad(() => adminApi.get(`/users?${qs}&page=${page}&limit=${perPage}`), [qs, page, perPage]);
 
+  // Refresh quietly every 30 s so the green and red dots stay current.
+  const { reload } = state;
+  useEffect(() => {
+    const t = setInterval(reload, 30000);
+    return () => clearInterval(t);
+  }, [reload]);
+
   const active = Object.entries(filters).filter(([, v]) => v !== "");
   const apply = () => { setFilters(draft); setPage(1); setShowFilters(false); };
   const clearAll = () => { setDraft(EMPTY_FILTERS); setFilters(EMPTY_FILTERS); setKeyword(""); setQ(""); setPage(1); };
@@ -71,7 +79,7 @@ export function Members() {
 
   const total = state.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / Number(perPage)));
-  const LABELS = { role: "Role", status: "Status", kyc: "KYC", approval: "Approval", emailVerified: "Email verified", mobileVerified: "Mobile verified", supportAccess: "Support access", city: "City/area", idFrom: "ID from", idTo: "ID to", joinedFrom: "Joined from", joinedTo: "Joined to" };
+  const LABELS = { online: "Online", role: "Role", status: "Status", kyc: "KYC", approval: "Approval", emailVerified: "Email verified", mobileVerified: "Mobile verified", supportAccess: "Support access", city: "City/area", idFrom: "ID from", idTo: "ID to", joinedFrom: "Joined from", joinedTo: "Joined to" };
 
   return (
     <>
@@ -104,6 +112,7 @@ export function Members() {
           <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
             <Range label="ID" from={draft.idFrom} to={draft.idTo} onFrom={setD("idFrom")} onTo={setD("idTo")} type="number" />
             <Range label="Joined" from={draft.joinedFrom} to={draft.joinedTo} onFrom={setD("joinedFrom")} onTo={setD("joinedTo")} type="date" />
+            <Pick label="Online" value={draft.online} onChange={setD("online")} options={[["", "Any"], ["yes", "Online now"], ["no", "Offline"]]} />
             <Pick label="Role" value={draft.role} onChange={setD("role")} options={[["", "Any"], ["customer", "Customer"], ["companion", "Companion"]]} />
             <Pick label="Status" value={draft.status} onChange={setD("status")} options={[["", "Any"], ["active", "Active"], ["pending", "Unverified"], ["warned", "Warned"], ["suspended", "Suspended"], ["banned", "Banned"], ["deleted", "Deleted"]]} />
             <Pick label="KYC" value={draft.kyc} onChange={setD("kyc")} options={[["", "Any"], ["none", "Not started"], ["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"]]} />
@@ -126,6 +135,9 @@ export function Members() {
       <Alert>{problem}</Alert>
       <div className="mb-2 flex flex-wrap items-center gap-3 text-sm">
         <span>{total} records found</span>
+        <button type="button" className="inline-flex items-center gap-1 rounded-full border border-ink-line px-2 py-0.5" title="Show only members online now" onClick={() => { const next = { ...filters, online: "yes" }; setFilters(next); setDraft(next); setPage(1); }}>
+          <OnlineDot online /> {state.data?.onlineNow ?? 0} online now
+        </button>
         <span className="ml-auto flex items-center gap-2">
           <Select label="Per page" value={perPage} onChange={(v) => { setPerPage(v); setPage(1); }} options={[["20", "20"], ["50", "50"], ["100", "100"], ["200", "200"]]} />
           per page
@@ -155,6 +167,7 @@ export function Members() {
             <tbody>
               {state.data.users.map((u) => (
                 <tr key={u.id}>
+                  <td><OnlineDot online={u.online} lastSeenAt={u.lastSeenAt} /></td>
                   <td>{u.id}</td>
                   <td><Link to={`/admin/members/${u.id}`}>{u.name}</Link></td>
                   <td className="text-xs">{u.email} {!u.emailVerified && <Badge tone="warn">unverified</Badge>}</td>
@@ -175,6 +188,20 @@ export function Members() {
         )}
       </Loader>
     </>
+  );
+}
+
+/** Green = has the site open now; red = offline (hover shows when last seen). */
+export function OnlineDot({ online, lastSeenAt }) {
+  const label = online ? "Online now" : lastSeenAt ? `Offline · last seen ${ago(lastSeenAt)}` : "Offline · never seen";
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className="inline-block h-2.5 w-2.5 rounded-full align-middle"
+      style={{ background: online ? "#16a34a" : "#dc2626", boxShadow: online ? "0 0 0 3px rgba(22,163,74,.2)" : "none" }}
+    />
   );
 }
 
@@ -343,7 +370,10 @@ function MemberBody({ data, admin, done, setDone, onStatus, ask, reload }) {
 
   return (
     <>
-      <PageHead title={m.name} sub={`${m.role} · #${m.id} · joined ${dateOnly(m.createdAt)}`}>
+      <PageHead
+        title={<span className="inline-flex items-center gap-2"><OnlineDot online={m.online} lastSeenAt={m.lastSeenAt} /> {m.name}</span>}
+        sub={`${m.online ? "Online now" : m.lastSeenAt ? `Offline · last seen ${ago(m.lastSeenAt)}` : "Offline"} · ${m.role} · #${m.id} · joined ${dateOnly(m.createdAt)}`}
+      >
         {!readOnly(admin) &&
           ACTIONS.filter(([s]) => s !== m.status).map(([s, label, variant]) => (
             <Button key={s} size="sm" variant={variant} onClick={() => onStatus(s, label)}>
@@ -373,6 +403,7 @@ function MemberBody({ data, admin, done, setDone, onStatus, ask, reload }) {
               ["Age", m.age],
               ["Support access", supportOn ? <Badge key="sa" tone="good">Allowed until {dateTime(m.supportAccessUntil)}</Badge> : "Not allowed"],
               ["Membership", <span key="m"><StatusBadge value={m.membershipStatus} /> {m.membershipExpiresAt && `until ${dateOnly(m.membershipExpiresAt)}`}</span>],
+              ["Online", <span key="on" className="inline-flex items-center gap-2"><OnlineDot online={m.online} lastSeenAt={m.lastSeenAt} /> {m.online ? "Online now" : `Offline${m.lastSeenAt ? ` · last seen ${dateTime(m.lastSeenAt)}` : ""}`}</span>],
               ["Last sign-in", dateTime(m.lastLoginAt)],
               ["City / area", `${m.city || "—"} / ${m.area || "—"}`],
               ["Reports filed", data.reportsFiled],
@@ -416,6 +447,7 @@ function MemberBody({ data, admin, done, setDone, onStatus, ask, reload }) {
       )}
 
       <InternalCard member={m} canEdit={canEdit} onSaved={(msg) => { setDone(msg); reload(); }} />
+      <WalletCard member={m} canAdjust={can(admin, "payments") && !readOnly(admin)} canModerate={canEdit} onSaved={(msg) => { setDone(msg); reload(); }} />
 
       <p className="mb-6 text-xs text-muted">
         Not editable by staff, by design: ID documents (approve or reject only), bank / UPI details (only the member changes them), passwords (send a reset code), review text (hide only), and payment amounts (use refunds or dispute decisions).
@@ -524,6 +556,90 @@ function InternalCard({ member: m, canEdit, onSaved }) {
       </div>
       <Alert>{problem}</Alert>
       {canEdit && <Button size="sm" loading={busy} onClick={save}>Save</Button>}
+    </Card>
+  );
+}
+
+/** Wallet balance and statement, manual adjustments, referral and rating review. */
+function WalletCard({ member: m, canAdjust, canModerate, onSaved }) {
+  const [rupees, setRupees] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState("");
+  const [problem, setProblem] = useState("");
+  const [statement, setStatement] = useState(null);
+
+  const adjust = async (sign) => {
+    setBusy(sign > 0 ? "add" : "take");
+    setProblem("");
+    try {
+      await adminApi.post(`/users/${m.id}/wallet`, { amountPaise: sign * Math.round(Number(rupees) * 100), reason });
+      setRupees("");
+      setReason("");
+      setStatement(null);
+      onSaved(sign > 0 ? "Wallet credited." : "Taken from the wallet.");
+    } catch (e) {
+      setProblem(errText(e));
+    } finally {
+      setBusy("");
+    }
+  };
+  const clearReview = async (keepHidden) => {
+    setBusy("review");
+    setProblem("");
+    try {
+      await adminApi.post(`/users/${m.id}/rating-review/clear`, { keepHidden, note: keepHidden ? "Kept hidden after rating review" : "Rating review cleared" });
+      onSaved(keepHidden ? "Kept hidden." : "Review cleared — back to normal.");
+    } catch (e) {
+      setProblem(errText(e));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <Card className="mb-6">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h2 className="m-0 text-base">Wallet &amp; referrals</h2>
+        <Badge tone={m.walletPaise ? "good" : "plain"}>{inr(m.walletPaise || 0, { decimals: true })}</Badge>
+        {m.referralCode && <Badge>Code {m.referralCode}</Badge>}
+        {m.referredById && <Link className="text-xs underline" to={`/admin/members/${m.referredById}`}>Invited by member #{m.referredById}</Link>}
+      </div>
+      {m.ratingReviewAt && (
+        <Alert tone="info">
+          Sent for review on {dateTime(m.ratingReviewAt)} because the average rating fell below the bar.{" "}
+          {m.role === "companion" ? "Hidden from search meanwhile." : "Account marked warned."}
+          {canModerate && (
+            <span className="mt-2 flex gap-2">
+              <Button size="sm" loading={busy === "review"} onClick={() => clearReview(false)}>Clear — back to normal</Button>
+              {m.role === "companion" && <Button size="sm" variant="outline" onClick={() => clearReview(true)}>Keep hidden</Button>}
+            </span>
+          )}
+        </Alert>
+      )}
+      {canAdjust && (
+        <div className="grid gap-3 sm:grid-cols-[140px_1fr_auto_auto] sm:items-end">
+          <Field id="w-amt" label="Amount (₹)" type="number" min="1" value={rupees} onChange={(e) => setRupees(e.target.value)} />
+          <Field id="w-why" label="Reason (the member sees it)" value={reason} onChange={(e) => setReason(e.target.value)} />
+          <Button size="sm" loading={busy === "add"} disabled={!rupees || reason.length < 4} onClick={() => adjust(1)}>Add</Button>
+          <Button size="sm" variant="outline" loading={busy === "take"} disabled={!rupees || reason.length < 4} onClick={() => adjust(-1)}>Take back</Button>
+        </div>
+      )}
+      <Alert>{problem}</Alert>
+      {canAdjust && (
+        statement ? (
+          <ul className="m-0 mt-3 list-none p-0 text-sm">
+            {statement.length === 0 && <li className="text-muted">No wallet activity.</li>}
+            {statement.map((t) => (
+              <li key={t.id} className="flex justify-between gap-3 border-t border-ink-line py-1.5">
+                <span>{dateTime(t.at)} · {t.kind}{t.note ? ` — ${t.note}` : ""}</span>
+                <span className="whitespace-nowrap">{t.amountPaise > 0 ? "+" : "−"}{inr(Math.abs(t.amountPaise), { decimals: true })} → {inr(t.balanceAfterPaise, { decimals: true })}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <Button size="sm" variant="ghost" className="mt-2" onClick={async () => setStatement((await adminApi.get(`/users/${m.id}/wallet`)).transactions)}>Show statement</Button>
+        )
+      )}
     </Card>
   );
 }

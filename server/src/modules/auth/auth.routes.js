@@ -30,6 +30,11 @@ router.post("/login-otp/verify", loginLimiter, ctrl.loginWithOtp);
 router.post("/mobile/send", requireAuth, otpLimiter, ctrl.sendMobileOtp);
 router.post("/mobile/verify", requireAuth, otpLimiter, ctrl.verifyMobile);
 router.get("/me", requireAuth, ctrl.me);
+
+/* My devices: where I am signed in, and signing them out. */
+router.get("/sessions", requireAuth, ctrl.listSessions);
+router.delete("/sessions/:id([a-f0-9]{32})", requireAuth, ctrl.endSession);
+router.post("/sessions/sign-out-others", requireAuth, ctrl.endOtherSessions);
 router.post(
   "/change-password",
   requireAuth,

@@ -38,6 +38,11 @@ const Availability = require("./Availability")(sequelize);
 const Review = require("./Review")(sequelize);
 const PayoutAccount = require("./PayoutAccount")(sequelize);
 const SosAlert = require("./SosAlert")(sequelize);
+const WalletTxn = require("./WalletTxn")(sequelize);
+const Coupon = require("./Coupon")(sequelize);
+const CouponRedemption = require("./CouponRedemption")(sequelize);
+const Favorite = require("./Favorite")(sequelize);
+const PublicPlace = require("./PublicPlace")(sequelize);
 
 /* ---- the account and the things that describe it ---- */
 
@@ -162,6 +167,22 @@ Report.belongsTo(Message, { foreignKey: "messageId", as: "message" });
 SosAlert.belongsTo(User, { foreignKey: "userId", as: "user" });
 SosAlert.belongsTo(Booking, { foreignKey: "bookingId", as: "booking" });
 
+/* ---- wallet, coupons, favourites, places ---- */
+
+User.hasMany(WalletTxn, { foreignKey: "userId", as: "walletTxns", onDelete: "CASCADE" });
+WalletTxn.belongsTo(User, { foreignKey: "userId", as: "member" });
+
+Coupon.hasMany(CouponRedemption, { foreignKey: "couponId", as: "redemptions" });
+CouponRedemption.belongsTo(Coupon, { foreignKey: "couponId", as: "coupon" });
+CouponRedemption.belongsTo(User, { foreignKey: "userId", as: "member" });
+Booking.belongsTo(Coupon, { foreignKey: "couponId", as: "coupon" });
+
+User.hasMany(Favorite, { foreignKey: "userId", as: "favorites", onDelete: "CASCADE" });
+Favorite.belongsTo(User, { foreignKey: "companionId", as: "companion" });
+
+Booking.belongsTo(PublicPlace, { foreignKey: "placeId", as: "place" });
+User.belongsTo(User, { foreignKey: "referredById", as: "referrer" });
+
 /* ---- housekeeping ---- */
 
 User.hasMany(OtpCode, { foreignKey: "userId", as: "otpCodes", onDelete: "CASCADE" });
@@ -206,4 +227,9 @@ module.exports = {
   Review,
   PayoutAccount,
   SosAlert,
+  WalletTxn,
+  Coupon,
+  CouponRedemption,
+  Favorite,
+  PublicPlace,
 };

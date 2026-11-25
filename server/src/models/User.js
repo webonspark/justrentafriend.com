@@ -86,6 +86,16 @@ module.exports = (sequelize) => {
       supportAccessUntil: { type: DataTypes.DATE, allowNull: true },
       adminNotes: { type: DataTypes.TEXT, allowNull: true },
 
+      /* Wallet: spendable on bookings. Changed only through lib/wallet.js,
+         which writes a wallet_txns line with every change. */
+      walletPaise: { type: DataTypes.BIGINT, allowNull: false, defaultValue: 0 },
+
+      /* Refer a friend: everyone has a code; referredById is who invited
+         them; the reward is paid once, after their first completed meet. */
+      referralCode: { type: DataTypes.STRING(12), allowNull: true, unique: true },
+      referredById: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
+      referralRewardedAt: { type: DataTypes.DATE, allowNull: true },
+
       /* Deleting an account starts a 30-day grace period rather than wiping
          the row, so it can be undone and so finance records survive. */
       deletionRequestedAt: { type: DataTypes.DATE, allowNull: true },

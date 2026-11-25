@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   FiActivity, FiAlertTriangle, FiBookOpen, FiCheckSquare, FiCreditCard, FiDollarSign, FiFlag, FiGrid,
-  FiImage, FiLayers, FiList, FiLogOut, FiMenu, FiSettings, FiShield, FiStar, FiTag, FiUsers, FiX, FiUserCheck,
+  FiImage, FiLayers, FiList, FiLogOut, FiMenu, FiSettings, FiShield, FiStar, FiTag, FiUsers, FiX, FiUserCheck, FiGift, FiMapPin,
 } from "react-icons/fi";
 import { adminApi } from "../../services/api";
 import { BRAND } from "../../config/brand";
@@ -15,6 +15,7 @@ import { BookingAdminDetail, BookingsAdmin } from "./BookingsAdmin";
 import { Payments, Payouts } from "./Money";
 import { Reports, Sos } from "./SafetyAdmin";
 import { Audit, Categories, Plans, SettingsAdmin, Staff } from "./Config";
+import { Coupons, Places } from "./Growth";
 
 /**
  * The admin area: its own sign-in, its own session (separate cookie from
@@ -34,6 +35,8 @@ const NAV = [
   ["reports", "reports", "Reports & chat", FiFlag],
   ["sos", "sos", "SOS alerts", FiAlertTriangle],
   ["reviews", "reviews", "Reviews", FiStar],
+  ["coupons", "coupons", "Coupons", FiGift],
+  ["places", "places", "Public places", FiMapPin],
   ["settings", "settings", "Settings", FiSettings],
   ["categories", "categories", "Categories", FiTag],
   ["plans", "plans", "Plans", FiLayers],
@@ -195,6 +198,8 @@ function Shell() {
             {guard("reports", "reports", <Reports />)}
             {guard("sos", "sos", <Sos />)}
             {guard("reviews", "reviews", <Reviews />)}
+            {guard("coupons", "coupons", <Coupons />)}
+            {guard("places", "places", <Places />)}
             {guard("settings", "settings", <SettingsAdmin />)}
             {guard("categories", "categories", <Categories />)}
             {guard("plans", "plans", <Plans />)}

@@ -167,3 +167,37 @@ exports.logout = async (req, res, next) => {
 exports.me = async (req, res) => res.json({ user: req.user.toSafeJSON() });
 
 exports.REFRESH_COOKIE = REFRESH_COOKIE;
+
+/* ---- My devices ---- */
+
+const tokens = require("../../lib/tokens");
+const realtime = require("../../lib/realtime");
+
+exports.listSessions = async (req, res, next) => {
+  try {
+    res.json({ sessions: await tokens.listSessions(req.user.id, req.cookies?.[REFRESH_COOKIE]) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.endSession = async (req, res, next) => {
+  try {
+    const ok = await tokens.revokeFamily(req.user.id, req.params.id);
+    if (!ok) throw require("../../lib/errors").notFound("That device is already signed out.");
+    realtime.kickDevice(req.params.id);
+    return res.json({ sessions: await tokens.listSessions(req.user.id, req.cookies?.[REFRESH_COOKIE]) });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+exports.endOtherSessions = async (req, res, next) => {
+  try {
+    const ended = await tokens.revokeOtherFamilies(req.user.id, req.cookies?.[REFRESH_COOKIE]);
+    ended.forEach((fam) => realtime.kickDevice(fam));
+    return res.json({ ended: ended.length, sessions: await tokens.listSessions(req.user.id, req.cookies?.[REFRESH_COOKIE]) });
+  } catch (err) {
+    return next(err);
+  }
+};

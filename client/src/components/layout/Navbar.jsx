@@ -13,6 +13,8 @@ import {
   FiLock,
   FiSun,
   FiMoon,
+  FiGrid,
+  FiHeart,
 } from "react-icons/fi";
 import { BRAND, CITY } from "../../config/brand";
 import { useAuth } from "../../context/AuthContext";
@@ -36,6 +38,7 @@ const PUBLIC_LINKS = [
 ];
 
 const MEMBER_LINKS = [
+  { to: "/dashboard", label: "Dashboard" },
   { to: "/discover", label: "Discover", gated: true },
   { to: "/bookings", label: "Bookings", gated: true },
   { to: "/messages", label: "Messages", gated: true },
@@ -59,7 +62,7 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-50 border-b border-ink-line bg-ink/85 backdrop-blur-xl">
       <div className="k-wrap flex h-[68px] items-center justify-between gap-6">
-        <Link to={signedIn ? "/discover" : "/"} className="flex items-center gap-2.5">
+        <Link to={signedIn ? "/dashboard" : "/"} className="flex items-center gap-2.5">
           <Mark />
           <span className="text-[1.0625rem] font-extrabold tracking-[-0.03em]">{BRAND}</span>
         </Link>
@@ -215,6 +218,15 @@ function AccountMenu({ user, isCompanion, onSignOut }) {
         </div>
         <Dropdown.Divider />
 
+        <Dropdown.Item as={Link} to="/dashboard">
+          <FiGrid className="mr-2 inline" size={15} /> My dashboard
+        </Dropdown.Item>
+        <Dropdown.Item as={Link} to="/wallet">
+          <FiCreditCard className="mr-2 inline" size={15} /> Wallet &amp; refer a friend
+        </Dropdown.Item>
+        <Dropdown.Item as={Link} to="/favorites">
+          <FiHeart className="mr-2 inline" size={15} /> Favourites
+        </Dropdown.Item>
         <Dropdown.Item as={Link} to="/profile">
           <FiUser className="mr-2 inline" size={15} /> My profile
         </Dropdown.Item>

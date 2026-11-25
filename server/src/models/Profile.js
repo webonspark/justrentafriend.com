@@ -62,6 +62,13 @@ module.exports = (sequelize) => {
       ratingCount: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
 
       lastSeenAt: { type: DataTypes.DATE, allowNull: true },
+
+      /* Companions: "Available now" for same-day meets, until this time. */
+      availableNowUntil: { type: DataTypes.DATE, allowNull: true },
+      /* Companions: only take requests from ID-verified Customers. */
+      verifiedCustomersOnly: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+      /* Set when the rating fell below the bar; staff review, then clear it. */
+      ratingReviewAt: { type: DataTypes.DATE, allowNull: true },
       onboardingComplete: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     },
     { tableName: "profiles",

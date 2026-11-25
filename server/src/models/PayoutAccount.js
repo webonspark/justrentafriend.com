@@ -19,6 +19,9 @@ module.exports = (sequelize) =>
       accountLast4: { type: DataTypes.STRING(4), allowNull: true },
       ifsc: { type: DataTypes.STRING(11), allowNull: true },
       providerRef: { type: DataTypes.STRING(120), allowNull: true },
+      // Set when an existing account is replaced. Payouts wait 24 h after a
+      // change, so a stolen login cannot redirect money straight away.
+      changedAt: { type: DataTypes.DATE, allowNull: true },
     },
     { tableName: "payout_accounts" }
   );

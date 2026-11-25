@@ -19,11 +19,15 @@ const { User, RefreshToken } = require("../models");
 
 const hash = (token) => crypto.createHash("sha256").update(token).digest("hex");
 
-function signAccessToken(account, kind = "user") {
+/**
+ * `fam` (members only) names the login this token belongs to, so one device
+ * can be signed out on its own: its socket joins the room fam:<id>.
+ */
+function signAccessToken(account, kind = "user", { fam } = {}) {
   return jwt.sign(
-    { sub: account.id, kind, role: account.role },
+    { sub: account.id, kind, role: account.role, ...(fam ? { fam } : {}) },
     env.auth.accessSecret,
-    { expiresIn: env.auth.accessTtl }
+    { expiresIn: env.auth.accessTtl, algorithm: "HS256" }
   );
 }
 
@@ -38,12 +42,16 @@ function signImpersonationToken(user, admin) {
   return jwt.sign(
     { sub: user.id, kind: "user", role: user.role, imp: admin.id },
     env.auth.accessSecret,
-    { expiresIn: `${IMPERSONATION_MINUTES}m` }
+    { expiresIn: `${IMPERSONATION_MINUTES}m`, algorithm: "HS256" }
   );
 }
 
+/* Only the algorithm we sign with is accepted, so a token can never pick
+   its own (the "alg: none" and key-confusion families of attack). */
+const ALGORITHM = "HS256";
+
 function verifyAccessToken(token) {
-  return jwt.verify(token, env.auth.accessSecret);
+  return jwt.verify(token, env.auth.accessSecret, { algorithms: [ALGORITHM] });
 }
 
 function expiryDate() {
@@ -53,9 +61,10 @@ function expiryDate() {
 }
 
 /** Starts a new session, and with it a new token family. */
-async function issueRefreshToken(account, { kind = "user", ip, userAgent } = {}) {
+const newFamilyId = () => crypto.randomBytes(16).toString("hex");
+
+async function issueRefreshToken(account, { kind = "user", ip, userAgent, familyId = newFamilyId() } = {}) {
   const token = crypto.randomBytes(48).toString("base64url");
-  const familyId = crypto.randomBytes(16).toString("hex");
 
   await RefreshToken.create({
     [kind === "admin" ? "adminId" : "userId"]: account.id,
@@ -118,7 +127,7 @@ async function rotateRefreshToken(token, { ip, userAgent } = {}) {
     account,
     kind: row.userId ? "user" : "admin",
     refreshToken: next,
-    accessToken: signAccessToken(account, row.userId ? "user" : "admin"),
+    accessToken: row.userId ? signAccessToken(account, "user", { fam: row.familyId }) : signAccessToken(account, "admin"),
   };
 }
 
@@ -138,8 +147,64 @@ async function revokeAllForUser(userId) {
   );
 }
 
+/* ---- "My devices": one row per login that is still signed in ---- */
+
+function deviceName(ua = "") {
+  const s = String(ua);
+  const browser = /Edg\//.test(s) ? "Edge" : /OPR\/|Opera/.test(s) ? "Opera" : /SamsungBrowser/.test(s) ? "Samsung Internet"
+    : /Firefox\//.test(s) ? "Firefox" : /Chrome\//.test(s) ? "Chrome" : /Safari\//.test(s) ? "Safari" : /curl|node|axios|undici/i.test(s) ? "App / script" : "Browser";
+  const os = /iPhone/.test(s) ? "iPhone" : /iPad/.test(s) ? "iPad" : /Android/.test(s) ? "Android phone" : /Windows/.test(s) ? "Windows"
+    : /Mac OS X|Macintosh/.test(s) ? "Mac" : /CrOS/.test(s) ? "Chromebook" : /Linux/.test(s) ? "Linux" : "Unknown device";
+  return { browser, os, mobile: /iPhone|Android|Mobile/.test(s) };
+}
+
+async function listSessions(userId, currentToken) {
+  const { Op, fn, col } = require("sequelize");
+  const live = await RefreshToken.findAll({
+    where: { userId, revokedAt: null, expiresAt: { [Op.gt]: new Date() } },
+    order: [["createdAt", "DESC"]],
+  });
+  if (!live.length) return [];
+  const firsts = await RefreshToken.findAll({
+    attributes: ["familyId", [fn("MIN", col("created_at")), "first"]],
+    where: { familyId: { [Op.in]: live.map((r) => r.familyId) } },
+    group: ["familyId"],
+    raw: true,
+  });
+  const since = Object.fromEntries(firsts.map((f) => [f.familyId, f.first]));
+  const currentHash = currentToken ? hash(currentToken) : null;
+  return live.map((r) => ({
+    id: r.familyId,
+    ...deviceName(r.userAgent),
+    ip: r.ip,
+    signedInAt: since[r.familyId] || r.createdAt,
+    lastActiveAt: r.createdAt,
+    current: r.tokenHash === currentHash,
+  }));
+}
+
+/** Signs one login (device) out. Returns false if it was not this member's. */
+async function revokeFamily(userId, familyId) {
+  const [n] = await RefreshToken.update({ revokedAt: new Date() }, { where: { userId, familyId, revokedAt: null } });
+  return n > 0;
+}
+
+/** Signs out every device except the one making the request. */
+async function revokeOtherFamilies(userId, currentToken) {
+  const { Op } = require("sequelize");
+  const cur = currentToken ? await RefreshToken.findOne({ where: { tokenHash: hash(currentToken), userId } }) : null;
+  const where = { userId, revokedAt: null, ...(cur ? { familyId: { [Op.ne]: cur.familyId } } : {}) };
+  const ended = await RefreshToken.findAll({ where, attributes: ["familyId"], group: ["familyId"], raw: true });
+  await RefreshToken.update({ revokedAt: new Date() }, { where });
+  return ended.map((r) => r.familyId);
+}
+
 module.exports = {
   IMPERSONATION_MINUTES,
+  newFamilyId,
+  listSessions,
+  revokeFamily,
+  revokeOtherFamilies,
   signImpersonationToken,
   signAccessToken,
   verifyAccessToken,

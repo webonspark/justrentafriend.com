@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { Modal } from "react-bootstrap";
-import { FiCheck, FiFlag, FiMapPin, FiMessageCircle, FiPlay, FiX } from "react-icons/fi";
+import { FiCheck, FiFlag, FiHeart, FiMapPin, FiMessageCircle, FiPlay, FiRepeat, FiShield, FiX } from "react-icons/fi";
 import { api, ApiError } from "../../services/api";
 import { STATUS, dateTime, inr, timeOnly } from "../../lib/format";
 import { Alert, Avatar, Badge, Button, Card, EmptyState, Field, Skeleton } from "../../components/ui";
 import Checkout from "../../components/shared/Checkout";
 import ReportModal from "../../components/shared/ReportModal";
 import SosButton from "../../components/shared/SosButton";
+import PlaceMap from "../../components/shared/PlaceMap";
 import { useSiteConfig } from "../info/InfoLayout";
 
 /**
@@ -52,11 +53,17 @@ export default function BookingDetail() {
     }
   };
 
-  const pay = async () => {
+  const pay = async (opts) => {
     setBusy("pay");
     setProblem("");
     try {
-      setCheckout(await api.bookingAction(id, "pay"));
+      const r = await api.bookingAction(id, "pay", opts);
+      if (r.paid) {
+        setB(r.booking);
+        setNotice("Paid from your wallet — your booking is confirmed and chat is open.");
+      } else {
+        setCheckout(r);
+      }
     } catch (e) {
       setProblem(e instanceof ApiError ? e.message : "Could not start the payment.");
     } finally {
@@ -93,7 +100,10 @@ export default function BookingDetail() {
             {other.photo ? <img src={other.photo} alt="" className="h-16 w-16 rounded-full object-cover" /> : <Avatar name={other.name} size={64} />}
             <div className="flex-1">
               <p className="m-0 text-xs uppercase tracking-wide text-muted">{isCustomer ? "Your Companion" : "Your Customer"}</p>
-              <p className="m-0 text-lg font-bold">{other.name} {other.verified && <Badge tone="good">Verified</Badge>}</p>
+              <p className="m-0 text-lg font-bold">
+                {other.name} {other.verified && <Badge tone="good">Verified</Badge>}{" "}
+                {!isCustomer && (other.idVerified ? <Badge tone="good"><FiShield className="mr-1 inline" />ID verified</Badge> : <Badge>ID not verified</Badge>)}
+              </p>
               <p className="m-0 text-sm text-muted">{other.ratingCount ? `★ ${other.rating.toFixed(1)} (${other.ratingCount})` : "No ratings yet"}</p>
             </div>
             {isCustomer && <Button to={`/companions/${other.id}`} variant="ghost" size="sm">Profile</Button>}
@@ -103,6 +113,9 @@ export default function BookingDetail() {
             <Row label="Service" value={b.service?.name} />
             <Row label="When" value={`${dateTime(b.startAt)} – ${timeOnly(b.endAt)} (${b.hours} h)`} />
             <Row label="Where" value={<span className="flex items-center gap-1"><FiMapPin size={13} /> {b.meetingPlace.name}{b.meetingPlace.address ? `, ${b.meetingPlace.address}` : ""}</span>} />
+            {b.meetingPlace.latitude != null && ["pending", "accepted", "confirmed", "in_progress"].includes(b.status) && (
+              <div className="mt-3"><PlaceMap latitude={b.meetingPlace.latitude} longitude={b.meetingPlace.longitude} name={b.meetingPlace.name} /></div>
+            )}
             {b.note && <Row label="Note" value={b.note} />}
             {b.rejectReason && <Row label="Reason" value={b.rejectReason} />}
             {b.cancelReason && <Row label="Cancelled" value={`By the ${b.cancelledBy}: ${b.cancelReason}`} />}
@@ -134,6 +147,7 @@ export default function BookingDetail() {
           {b.status === "in_progress" && (
             <Card>
               <h2 className="mb-3 text-lg">Meet in progress</h2>
+              <SafetyCheck check={b.safetyCheck} busy={busy === "safe"} onSafe={() => act("safe", {}, () => "Thanks — glad you're OK. Enjoy the rest of your meet.")} />
               <Row label="Started" value={timeOnly(b.startedAt)} />
               <Row label="Booked until" value={timeOnly(b.endAt)} />
               <p className="mt-3 text-xs text-muted">The meet ends by itself at the booked time. End it earlier if you're done.</p>
@@ -173,6 +187,7 @@ export default function BookingDetail() {
                 <Row label="You receive" value={<strong>{inr(b.payoutPaise)}</strong>} />
               </>
             )}
+            {isCustomer && b.discountPaise ? <Row label="Coupon discount" value={`− ${inr(b.discountPaise)}`} /> : null}
             {b.refundPaise ? <Row label="Refunded" value={inr(b.refundPaise)} /> : null}
             <p className="mb-0 mt-2 text-xs text-muted">
               {["confirmed", "in_progress"].includes(b.status) && "Paid and held safely by us until after the meet."}
@@ -194,12 +209,18 @@ export default function BookingDetail() {
               </>
             )}
             {b.status === "pending" && isCustomer && <p className="m-0 text-sm text-muted">Waiting for {other.name.split(" ")[0]} to answer — usually within a day.</p>}
-            {b.status === "accepted" && isCustomer && <Button block loading={busy === "pay"} onClick={pay}>Pay {inr(b.amountPaise)}</Button>}
+            {b.status === "accepted" && isCustomer && <PayBox bookingId={b.id} amountPaise={b.amountPaise} busy={busy === "pay"} onPay={pay} />}
             {b.status === "accepted" && !isCustomer && <p className="m-0 text-sm text-muted">Waiting for the Customer to pay.</p>}
             {b.conversationId && <Button block variant="outline" to={`/messages/${b.conversationId}`}><FiMessageCircle /> Chat</Button>}
             {["pending", "accepted", "confirmed"].includes(b.status) && <Button block variant="ghost" onClick={() => setDialog("cancel")}>Cancel booking</Button>}
             {b.canDispute && (
               <Button block variant="ghost" onClick={() => setDialog("dispute")}>Report a problem with this meet</Button>
+            )}
+            {isCustomer && ["completed", "cancelled", "expired", "rejected"].includes(b.status) && (
+              <>
+                <Button block to={`/companions/${other.id}`}><FiRepeat /> Book {first} again</Button>
+                <FavoriteButton companionId={other.id} />
+              </>
             )}
             <Button block variant="ghost" onClick={() => setReporting(true)}><FiFlag /> Report {other.name.split(" ")[0]}</Button>
           </Card>
@@ -212,8 +233,8 @@ export default function BookingDetail() {
         busy={Boolean(busy)}
         isCustomer={isCustomer}
         status={b.status}
-        onSubmit={(reason) => {
-          if (dialog === "cancel") act("cancel", { reason }, (next) => next.refundNote || "Booking cancelled.");
+        onSubmit={(reason, refundTo) => {
+          if (dialog === "cancel") act("cancel", { reason, refundTo }, (next) => `${next.refundNote || "Booking cancelled."}${next.refundPaise && refundTo === "wallet" ? " The refund is in your wallet now." : ""}`);
           if (dialog === "reject") act("reject", { reason }, () => "Declined. The Customer has been told.");
           if (dialog === "dispute") act("dispute", { reason }, () => "Thanks. Our team will review this and contact you; the payment is on hold meanwhile.");
         }}
@@ -274,6 +295,7 @@ function Row({ label, value }) {
 
 function ReasonDialog({ kind, onHide, onSubmit, busy, isCustomer, status }) {
   const [reason, setReason] = useState("");
+  const [refundTo, setRefundTo] = useState("wallet");
   const { freeHours, partialPct } = useSiteConfig();
   if (!kind) return null;
   const copy = {
@@ -298,7 +320,20 @@ function ReasonDialog({ kind, onHide, onSubmit, busy, isCustomer, status }) {
       <Modal.Body>
         <p className="text-sm text-muted">{copy.body}</p>
         <Field as="textarea" rows={3} label={kind === "dispute" ? "What happened?" : "Reason (optional)"} id="reason" value={reason} onChange={(e) => setReason(e.target.value)} />
-        <Button block loading={busy} onClick={() => onSubmit(reason)}>{copy.button}</Button>
+        {kind === "cancel" && isCustomer && status === "confirmed" && (
+          <fieldset className="mb-4">
+            <legend className="mb-2 text-sm font-bold">Where should any refund go?</legend>
+            <label className="mb-1 flex items-start gap-2 text-sm">
+              <input type="radio" name="refundTo" className="mt-1" checked={refundTo === "wallet"} onChange={() => setRefundTo("wallet")} />
+              <span>My wallet — <strong>instant</strong>, use it on your next booking</span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="radio" name="refundTo" className="mt-1" checked={refundTo === "original"} onChange={() => setRefundTo("original")} />
+              <span>Back to my card / UPI — takes 5–7 working days</span>
+            </label>
+          </fieldset>
+        )}
+        <Button block loading={busy} onClick={() => onSubmit(reason, refundTo)}>{copy.button}</Button>
       </Modal.Body>
     </Modal>
   );
@@ -318,5 +353,106 @@ function ReviewForm({ name, onSubmit, busy }) {
       <Field as="textarea" rows={3} label="A few words (optional)" id="review" value={comment} onChange={(e) => setComment(e.target.value)} />
       <Button loading={busy} disabled={!rating} onClick={() => onSubmit({ rating, comment })}>Post review</Button>
     </Card>
+  );
+}
+
+/** Halfway through a meet: "Are you OK?" — one tap answers it. */
+function SafetyCheck({ check, busy, onSafe }) {
+  if (!check) return null;
+  if (check.waiting) {
+    return (
+      <div className="mb-4 rounded-xl border p-4" style={{ borderColor: "var(--rose)" }}>
+        <p className="m-0 font-bold">Are you OK?</p>
+        <p className="mb-3 mt-1 text-sm text-muted">A quick safety check. If you don't answer, our safety team is told and may call you.</p>
+        <Button loading={busy} onClick={onSafe}><FiShield /> I'm safe</Button>
+      </div>
+    );
+  }
+  if (check.mySafeAt) return <p className="mb-3 flex items-center gap-1 text-sm text-muted"><FiShield /> You checked in safe at {timeOnly(check.mySafeAt)}.</p>;
+  return (
+    <p className="mb-3 text-sm text-muted">
+      We'll ask both of you "Are you OK?" partway through. <button type="button" className="underline" style={{ background: "none", border: 0, padding: 0 }} onClick={onSafe}>I'm safe</button>
+    </p>
+  );
+}
+
+/** Pay an accepted booking: optional coupon, optional wallet, then checkout. */
+function PayBox({ bookingId, amountPaise, busy, onPay }) {
+  const [code, setCode] = useState("");
+  const [applied, setApplied] = useState("");
+  const [useWallet, setUseWallet] = useState(false);
+  const [q, setQ] = useState(null);
+  const [err, setErr] = useState("");
+  const [checking, setChecking] = useState(false);
+
+  const refresh = useCallback(async (opts) => {
+    setChecking(true);
+    try {
+      setQ(await api.bookingAction(bookingId, "quote", opts));
+      setErr("");
+      return true;
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Could not check that.");
+      return false;
+    } finally {
+      setChecking(false);
+    }
+  }, [bookingId]);
+
+  useEffect(() => { refresh({ couponCode: applied || null, useWallet }); }, [refresh, applied, useWallet]);
+
+  const apply = async () => {
+    const c = code.trim();
+    if (!c) return;
+    if (await refresh({ couponCode: c, useWallet })) setApplied(c);
+  };
+
+  const payable = q ? q.payablePaise : amountPaise;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-end gap-2">
+        <div className="flex-1">
+          <Field label="Coupon code" id="coupon" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="e.g. FIRST20" disabled={Boolean(applied)} />
+        </div>
+        {applied ? (
+          <Button variant="ghost" size="sm" onClick={() => { setApplied(""); setCode(""); }}>Remove</Button>
+        ) : (
+          <Button variant="outline" size="sm" loading={checking} disabled={!code.trim()} onClick={apply}>Apply</Button>
+        )}
+      </div>
+      {err && <p className="m-0 text-xs" style={{ color: "var(--rose)" }}>{err}</p>}
+      {q?.walletBalancePaise > 0 && (
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={useWallet} onChange={() => setUseWallet((v) => !v)} />
+          Use my wallet ({inr(q.walletBalancePaise)} available)
+        </label>
+      )}
+      {q && (q.discountPaise > 0 || q.walletPaise > 0 || q.gstPaise > 0) && (
+        <div className="text-sm">
+          <Row label="Booking" value={inr(q.amountPaise)} />
+          {q.gstPaise > 0 && <Row label="GST on fee" value={inr(q.gstPaise)} />}
+          {q.discountPaise > 0 && <Row label={`Coupon ${q.coupon?.code}`} value={`− ${inr(q.discountPaise)}`} />}
+          {q.walletPaise > 0 && <Row label="From wallet" value={`− ${inr(q.walletPaise)}`} />}
+          <Row label="To pay now" value={<strong>{inr(q.payablePaise)}</strong>} />
+        </div>
+      )}
+      <Button block loading={busy} disabled={checking} onClick={() => onPay({ couponCode: applied || null, useWallet })}>
+        {payable === 0 ? "Confirm — paid by wallet / coupon" : `Pay ${inr(payable)}`}
+      </Button>
+    </div>
+  );
+}
+
+/** Save a Companion for later ("Book again" from your favourites). */
+function FavoriteButton({ companionId }) {
+  const [on, setOn] = useState(null);
+  useEffect(() => {
+    api.favorites().then((d) => setOn(d.favorites.some((f) => f.id === companionId))).catch(() => setOn(false));
+  }, [companionId]);
+  if (on === null) return null;
+  return (
+    <Button block variant="ghost" onClick={async () => { await api.favorite(companionId, !on); setOn(!on); }}>
+      <FiHeart style={on ? { fill: "currentColor" } : undefined} /> {on ? "Saved to favourites" : "Save to favourites"}
+    </Button>
   );
 }

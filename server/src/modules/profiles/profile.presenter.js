@@ -47,6 +47,7 @@ function card(user, { from } = {}) {
     ratingCount: p.ratingCount || 0,
     completedMeets: p.completedMeets || 0,
     verified: Boolean(p.isVerified),
+    availableNow: Boolean(p.availableNowUntil && new Date(p.availableNowUntil) > new Date()),
     photo: primary ? publicUrl(primary.thumbPath || primary.path) : null,
     services: (user.services || []).map((s) => ({ id: s.id, name: s.name, slug: s.slug })),
     distanceKm: km === null ? null : Math.round(km * 10) / 10,

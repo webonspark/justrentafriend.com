@@ -46,7 +46,7 @@ export function RequireMembership() {
 export function RedirectIfSignedIn() {
   const { signedIn, ready } = useAuth();
   if (!ready) return <Waiting />;
-  if (signedIn) return <Navigate to="/discover" replace />;
+  if (signedIn) return <Navigate to="/dashboard" replace />;
   return <Outlet />;
 }
 

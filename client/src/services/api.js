@@ -142,6 +142,9 @@ export const api = {
   forgotPassword: (email) => request("/auth/forgot-password", { method: "POST", body: { email } }),
   resetPassword: (body) => request("/auth/reset-password", { method: "POST", body }),
   changePassword: (body) => request("/auth/change-password", { method: "POST", body }),
+  sessions: () => request("/auth/sessions"),
+  endSession: (id) => request(`/auth/sessions/${id}`, { method: "DELETE" }),
+  endOtherSessions: () => request("/auth/sessions/sign-out-others", { method: "POST" }),
 
   sendMobileOtp: () => request("/auth/mobile/send", { method: "POST" }),
   verifyMobile: (code) => request("/auth/mobile/verify", { method: "POST", body: { code } }),
@@ -161,6 +164,7 @@ export const api = {
   submitSelfie: (file) => request("/profiles/me/selfie", { method: "POST", body: form({ selfie: file }) }),
   submitForApproval: () => request("/profiles/me/submit", { method: "POST" }),
   savePayoutAccount: (body) => request("/profiles/me/payout-account", { method: "PUT", body }),
+  payoutCode: () => request("/profiles/me/payout-account/code", { method: "POST" }),
   companion: (id) => request(`/profiles/${id}`),
 
   // ---- discover ----
@@ -181,6 +185,16 @@ export const api = {
   myPayments: () => request("/payments"),
   invoice: (id) => request(`/payments/${id}/invoice`, { raw: true }),
   earnings: () => request("/earnings"),
+  dashboard: () => request("/dashboard"),
+  peopleMet: () => request("/dashboard/people"),
+
+  // ---- wallet, refer a friend, favourites, places ----
+  wallet: () => request("/me/wallet"),
+  referral: () => request("/me/referral"),
+  favorites: () => request("/me/favorites"),
+  favorite: (companionId, on) => request(`/me/favorites/${companionId}`, { method: on ? "POST" : "DELETE" }),
+  places: (params = {}) => request(`/places?${new URLSearchParams(clean(params))}`),
+  setAvailableNow: (hours) => request("/profiles/me/available-now", { method: "PUT", body: { hours } }),
 
   // ---- chat ----
   conversations: () => request("/chat"),

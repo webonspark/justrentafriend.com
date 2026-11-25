@@ -14,7 +14,13 @@ const {
   CompanionRate,
   Availability,
   Review,
+  CouponRedemption,
+  SosAlert,
+  PublicPlace,
+  Report,
 } = require("../../models");
+const wallet = require("../../lib/wallet");
+const referrals = require("../../lib/referrals");
 const settings = require("../../lib/settings");
 const gateway = require("../../lib/payments");
 const payouts = require("../../lib/payouts");
@@ -66,7 +72,7 @@ const PRIVATE_PLACE =
 const PARTY_INCLUDE = (as) => ({
   model: User,
   as,
-  attributes: ["id", "fullName", "role", "mobile"],
+  attributes: ["id", "fullName", "role", "mobile", "kycStatus"],
   include: [
     { model: Profile, as: "profile", attributes: ["area", "city", "isVerified", "ratingAvg", "ratingCount"] },
     { model: Photo, as: "photos", where: { moderationStatus: "approved", isPrimary: true }, required: false },
@@ -83,6 +89,8 @@ function partyJson(u) {
     name: u.fullName,
     area: u.profile?.area,
     verified: Boolean(u.profile?.isVerified),
+    // Customers: their ID check is approved — what the Companion sees on a request.
+    idVerified: u.kycStatus === "approved",
     rating: Number(u.profile?.ratingAvg || 0),
     ratingCount: u.profile?.ratingCount || 0,
     photo: photo ? publicUrl(photo.thumbPath || photo.path) : null,
@@ -103,7 +111,13 @@ function bookingJson(b, viewerId) {
     startAt: b.startAt,
     endAt: b.endAt,
     hours: Number(b.hours),
-    meetingPlace: { name: b.meetingPlaceName, type: b.meetingPlaceType, address: b.meetingPlaceAddress },
+    meetingPlace: {
+      name: b.meetingPlaceName,
+      type: b.meetingPlaceType,
+      address: b.meetingPlaceAddress,
+      latitude: b.place ? Number(b.place.latitude) : null,
+      longitude: b.place ? Number(b.place.longitude) : null,
+    },
     note: b.note,
     pricePerHourPaise: Number(b.pricePerHourPaise),
     amountPaise: Number(b.amountPaise),
@@ -117,6 +131,15 @@ function bookingJson(b, viewerId) {
     // The start code is the Customer's to show; the Companion must never see it.
     startCode: side === "customer" && ["confirmed"].includes(b.status) ? b.startCode : null,
     startedAt: b.startedAt,
+    safetyCheck: b.startedAt
+      ? {
+          askedAt: b.safetyCheckSentAt,
+          mySafeAt: side === "customer" ? b.customerSafeAt : b.companionSafeAt,
+          waiting: Boolean(b.safetyCheckSentAt) && !(side === "customer" ? b.customerSafeAt : b.companionSafeAt),
+        }
+      : null,
+    discountPaise: Number(b.discountPaise || 0),
+    placeId: b.placeId || null,
     complaintWindowEndsAt: b.completedAt ? new Date(new Date(b.completedAt).getTime() + COMPLAINT_WINDOW_HOURS * 3600e3) : null,
     canDispute:
       b.status === "in_progress" ||
@@ -149,6 +172,7 @@ async function loadFor(user, id) {
       { model: ServiceCategory, as: "service" },
       { model: Conversation, as: "conversation" },
       { model: Review, as: "reviews" },
+      { model: PublicPlace, as: "place" },
     ],
   });
   if (!b || (b.customerId !== user.id && b.companionId !== user.id)) throw notFound("That booking does not exist.");
@@ -216,16 +240,32 @@ async function create(customer, body) {
     companion.profile?.approvalStatus === "approved";
   if (!live) throw notFound("That Companion is not available.");
   if (await isBlocked(customer.id, companion.id)) throw notFound("That Companion is not available.");
+  if (companion.profile.verifiedCustomersOnly && customer.kycStatus !== "approved") {
+    throw forbidden("This Companion only accepts ID-verified Customers. Verify your ID from My profile, then book.");
+  }
 
   const serviceId = Number(body.serviceId);
   if (!companion.services.some((s) => s.id === serviceId)) throw badRequest("Pick a service this Companion offers.");
 
-  const placeType = MEETING_PLACE_TYPES.find((t) => t.id === body.meetingPlaceType);
+  /* The place: one from the checked public-places list. Typing a place in
+     is allowed only when the list is switched off, or the city has none. */
+  let place = null;
+  if (body.placeId) {
+    place = await PublicPlace.findOne({ where: { id: Number(body.placeId), isActive: true } });
+    if (!place) throw badRequest("That meeting place is not on the list any more. Pick another.");
+  } else {
+    const listOnly = String(await settings.get("public_places_only", true)) === "true";
+    const city = companion.profile?.city;
+    if (listOnly && (await PublicPlace.count({ where: { isActive: true, ...(city ? { city } : {}) } }))) {
+      throw badRequest("Pick a meeting place from the list of public places.");
+    }
+  }
+  const placeType = MEETING_PLACE_TYPES.find((t) => t.id === (place ? place.type : body.meetingPlaceType)) || (place ? { id: place.type } : null);
   if (!placeType) throw badRequest("Pick the kind of public place you will meet at.");
-  const placeName = String(body.meetingPlaceName || "").trim();
+  const placeName = place ? place.name : String(body.meetingPlaceName || "").trim();
   if (placeName.length < 3) throw badRequest("Name the place you will meet.");
-  const address = String(body.meetingPlaceAddress || "").trim();
-  if (PRIVATE_PLACE.test(`${placeName} ${address}`)) {
+  const address = place ? [place.address, place.area].filter(Boolean).join(", ") : String(body.meetingPlaceAddress || "").trim();
+  if (!place && PRIVATE_PLACE.test(`${placeName} ${address}`)) {
     throw badRequest("Meetings must be in a public place — not a home, hotel room or other private space.");
   }
 
@@ -277,6 +317,7 @@ async function create(customer, body) {
         meetingPlaceName: placeName,
         meetingPlaceType: placeType.id,
         meetingPlaceAddress: address || null,
+        placeId: place?.id || null,
         note: body.note ? String(body.note).slice(0, 500) : null,
         pricePerHourPaise: rate.pricePerHourPaise,
         amountPaise: split.amountPaise,
@@ -333,27 +374,67 @@ async function reject(companion, id, reason) {
 
 /* ------------------------------ payment & escrow ------------------------------ */
 
-async function startPayment(customer, id) {
+async function payable(customer, id) {
   const b = await loadFor(customer, id);
   if (b.customerId !== customer.id) throw forbidden("Only the Customer pays.");
   if (b.status !== "accepted") throw conflict("This booking is not waiting for payment.");
   if (new Date(b.startAt) <= new Date()) throw conflict("This booking's time has passed.");
-  return paymentService.startBooking(customer, b);
+  return b;
+}
+
+const payOptions = (body = {}) => ({
+  couponCode: body.couponCode ? String(body.couponCode).slice(0, 30) : null,
+  useWallet: body.useWallet === true || body.useWallet === "true",
+});
+
+/** The price breakdown before paying: coupon and wallet applied. */
+async function quote(customer, id, body) {
+  return paymentService.quoteBooking(customer, await payable(customer, id), payOptions(body));
+}
+
+async function startPayment(customer, id, body) {
+  const b = await payable(customer, id);
+  const r = await paymentService.startBooking(customer, b, payOptions(body));
+  if (r.paid) return { ...r, booking: bookingJson(await loadFor(customer, id), customer.id) };
+  return r;
 }
 
 /** Called by the payment service once a booking payment is verified. */
 paymentService.bookingHooks.onPaid = async (payment) => {
   const b = await Booking.findByPk(payment.bookingId);
   if (!b) return;
+  // Wallet money was put back because checkout looked abandoned — take it again.
+  if (payment.failureReason === "wallet_released" && Number(payment.walletPaise)) {
+    try {
+      await wallet.debit(payment.userId, Number(payment.walletPaise), { kind: "payment", bookingId: b.id, paymentId: payment.id, note: `Booking #${b.id}` });
+      await payment.update({ failureReason: null });
+    } catch {
+      logger.warn(`Booking ${b.id}: wallet part no longer available after a late payment; refunding the card part.`);
+      await payment.update({ walletPaise: 0 });
+      await refundPayment(payment, paidValue(payment));
+      await notify(b.customerId, { type: "booking_refunded", title: "Payment refunded", body: "Your wallet no longer had the amount set aside for this checkout, so the card payment was refunded. Please pay again.", link: `/bookings/${b.id}` });
+      return;
+    }
+  }
   if (b.status !== "accepted") {
     // Paid too late (expired or cancelled meanwhile): refund in full.
     logger.warn(`Booking ${b.id} paid while ${b.status}; refunding.`);
-    await refundPayment(payment, Number(payment.totalPaise));
+    await refundPayment(payment, paidValue(payment));
     await notify(b.customerId, { type: "booking_refunded", title: "Payment refunded", body: "The booking was no longer open, so your payment has been refunded in full.", link: `/bookings/${b.id}` });
     return;
   }
   await sequelize.transaction(async (t) => {
-    await b.update({ status: "confirmed", paidAt: new Date(), startCode: newStartCode(), startCodeAttempts: 0 }, { transaction: t });
+    await b.update(
+      { status: "confirmed", paidAt: new Date(), startCode: newStartCode(), startCodeAttempts: 0, couponId: payment.couponId || null, discountPaise: Number(payment.discountPaise || 0) },
+      { transaction: t }
+    );
+    if (payment.couponId && Number(payment.discountPaise)) {
+      await CouponRedemption.findOrCreate({
+        where: { bookingId: b.id },
+        defaults: { couponId: payment.couponId, userId: b.customerId, bookingId: b.id, discountPaise: Number(payment.discountPaise), status: "used" },
+        transaction: t,
+      });
+    }
     const existing = await Conversation.findOne({ where: { bookingId: b.id }, transaction: t });
     if (!existing) {
       await Conversation.create({ bookingId: b.id, customerId: b.customerId, companionId: b.companionId }, { transaction: t });
@@ -369,12 +450,39 @@ function newStartCode() {
   return String(crypto.randomInt(1000, 10000));
 }
 
-async function refundPayment(payment, amountPaise) {
-  const amount = Math.min(Number(amountPaise), Number(payment.totalPaise) - Number(payment.refundedPaise || 0));
+const paidValue = paymentService.paidValue;
+
+/**
+ * Gives money back on a booking payment. Returns what was refunded.
+ *
+ * Whatever came out of the wallet goes back to the wallet first. The rest
+ * goes back to the card/UPI through the gateway — or, with toWallet, into
+ * the wallet instead, which is instant.
+ */
+async function refundPayment(payment, amountPaise, { toWallet = false } = {}) {
+  await payment.reload();
+  const value = paidValue(payment);
+  const refundedBefore = Number(payment.refundedPaise || 0);
+  const amount = Math.min(Math.round(Number(amountPaise)), value - refundedBefore);
   if (amount <= 0) return 0;
-  await gateway.refund({ paymentId: payment.gatewayPaymentId, amountPaise: amount });
-  const refunded = Number(payment.refundedPaise || 0) + amount;
-  await payment.update({ refundedPaise: refunded, status: refunded >= Number(payment.totalPaise) ? "refunded" : "paid" });
+
+  const walletOrigin = Number(payment.walletPaise || 0);
+  const toWalletBefore = Number(payment.refundedToWalletPaise || 0);
+  const walletPart = Math.min(amount, Math.max(walletOrigin - Math.min(toWalletBefore, walletOrigin), 0));
+  const cashPart = amount - walletPart;
+  const creditWallet = walletPart + (toWallet || payment.gateway === "wallet" ? cashPart : 0);
+  const viaGateway = amount - creditWallet;
+
+  if (viaGateway > 0) await gateway.refund({ paymentId: payment.gatewayPaymentId, amountPaise: viaGateway });
+  if (creditWallet > 0) {
+    await wallet.credit(payment.userId, creditWallet, { kind: "refund", bookingId: payment.bookingId, paymentId: payment.id, note: payment.bookingId ? `Refund · Booking #${payment.bookingId}` : "Refund" });
+  }
+  const refunded = refundedBefore + amount;
+  await payment.update({
+    refundedPaise: refunded,
+    refundedToWalletPaise: toWalletBefore + creditWallet,
+    status: refunded >= value ? "refunded" : "paid",
+  });
   return amount;
 }
 
@@ -389,7 +497,7 @@ async function refundRule(b, byCompanion) {
   return { pct: 0, why: "Cancelled after the start time: no refund." };
 }
 
-async function cancel(user, id, reason) {
+async function cancel(user, id, reason, { refundTo = "original" } = {}) {
   const b = await loadFor(user, id);
   if (!["pending", "accepted", "confirmed"].includes(b.status)) throw conflict("This booking can no longer be cancelled.");
   const byCompanion = user.id === b.companionId;
@@ -403,7 +511,7 @@ async function cancel(user, id, reason) {
     const payment = await Payment.findOne({ where: { bookingId: b.id, status: "paid" } });
     if (payment) {
       // GST on the fee follows the same percentage as the time.
-      refund = await refundPayment(payment, Math.round((Number(payment.totalPaise) * rule.pct) / 100));
+      refund = await refundPayment(payment, Math.round((paidValue(payment) * rule.pct) / 100), { toWallet: refundTo === "wallet" });
     }
     // Whatever the Customer does not get back goes to the Companion, less commission.
     if (!byCompanion && rule.pct < 100) {
@@ -422,6 +530,10 @@ async function cancel(user, id, reason) {
   });
   await Conversation.update({ isClosed: true }, { where: { bookingId: b.id } });
   await releasePayout(b.id); // the late-cancellation share, if any
+  // A coupon on a booking that fell through with a full refund can be used again.
+  if (byCompanion || (b.status === "cancelled" && refund && refund >= Number(b.amountPaise) - Number(b.discountPaise || 0))) {
+    await CouponRedemption.update({ status: "released" }, { where: { bookingId: b.id } });
+  }
 
   const other = byCompanion ? b.customerId : b.companionId;
   await notify(other, {
@@ -557,6 +669,9 @@ async function finish(b, why) {
  * their KYC is not approved yet — released later from the admin payouts
  * screen or when they add an account.
  */
+const PAYOUT_CHANGE_HOLD_HOURS = 24;
+const PAYOUT_CHANGE_NOTE = "Payout account changed recently — held for 24 hours";
+
 async function releasePayout(bookingId) {
   const payout = await Payout.findOne({ where: { bookingId } });
   if (!payout || payout.status === "paid") return payout;
@@ -565,6 +680,10 @@ async function releasePayout(bookingId) {
   const account = await PayoutAccount.findOne({ where: { companionId: payout.companionId } });
   if (!account || companion.kycStatus !== "approved") {
     await payout.update({ status: "on_hold", note: !account ? "No payout account yet" : "KYC not approved yet" });
+    return payout;
+  }
+  if (account.changedAt && Date.now() - new Date(account.changedAt).getTime() < PAYOUT_CHANGE_HOLD_HOURS * 3600e3) {
+    await payout.update({ status: "on_hold", note: PAYOUT_CHANGE_NOTE });
     return payout;
   }
   try {
@@ -659,6 +778,205 @@ async function review(user, id, { rating, comment }) {
     );
   });
   await notify(subjectId, { type: "review_received", title: `You received a ${r}-star review`, link: `/bookings/${b.id}` });
+  await checkLowRating(subjectId);
+  return bookingJson(await loadFor(user, id), user.id);
+}
+
+/**
+ * Ratings go both ways. When someone's average drops below the bar (after
+ * enough reviews to be fair), staff are asked to review them: a Companion
+ * is taken out of search meanwhile; a Customer is warned. Staff clear it
+ * from the member page.
+ */
+async function checkLowRating(userId) {
+  const threshold = Number(await settings.get("low_rating_threshold", 3));
+  const minReviews = Number(await settings.get("low_rating_min_reviews", 5));
+  const profile = await Profile.findOne({ where: { userId } });
+  const user = await User.findByPk(userId);
+  if (!profile || !user || profile.ratingReviewAt) return false;
+  if (Number(profile.ratingCount) < minReviews || Number(profile.ratingAvg) >= threshold) return false;
+
+  await profile.update({ ratingReviewAt: new Date(), ...(user.role === "companion" && profile.approvalStatus === "approved" ? { approvalStatus: "pending", approvalNote: `Rating ${Number(profile.ratingAvg).toFixed(1)}★ from ${profile.ratingCount} reviews — under review` } : {}) });
+  if (user.role === "customer" && user.status === "active") await user.update({ status: "warned" });
+  await Report.create({
+    reporterId: userId,
+    reportedId: userId,
+    reason: "other",
+    details: `Automatic: average rating ${Number(profile.ratingAvg).toFixed(2)} from ${profile.ratingCount} reviews is below ${threshold}.`,
+    status: "open",
+  }).catch((e) => logger.error(`Low-rating report for ${userId} failed: ${e.message}`));
+  await notify(userId, {
+    type: "rating_review",
+    title: "Your account is being reviewed",
+    body: user.role === "companion"
+      ? "Your recent ratings are low, so your profile is hidden from search while our team takes a look. We will be in touch."
+      : "Your recent ratings from Companions are low. Our team will take a look — please keep every meet friendly and on time.",
+    link: "/profile",
+  });
+  logger.warn(`User ${userId} sent for rating review (${profile.ratingAvg} from ${profile.ratingCount}).`);
+  return true;
+}
+
+/* ------------------------------ reminders ------------------------------ */
+
+const REMINDER_DAY_HOURS = 24;
+const REMINDER_HOUR_MINUTES = 60;
+
+/** "Wed, 26 Nov, 6:30 pm" in India time. */
+const meetTime = (d) =>
+  new Date(d).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+
+/** "today at 6:30 pm" / "tomorrow at 6:30 pm" relative to now, in India time. */
+function whenText(startAt, now = new Date()) {
+  const day = (d) => new Date(d).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const time = new Date(startAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" });
+  const tomorrow = new Date(now.getTime() + 24 * 3600e3);
+  if (day(startAt) === day(now)) return `today at ${time}`;
+  if (day(startAt) === day(tomorrow)) return `tomorrow at ${time}`;
+  return `on ${meetTime(startAt)}`;
+}
+
+/**
+ * Two reminders per confirmed meet, to both people:
+ *   ~24 hours before   "your meet is tomorrow at …"
+ *   ~1 hour before     "your meet starts in about an hour" + start code hint
+ * In-app and email always (email unless switched off), SMS for the 1-hour
+ * one, WhatsApp for both when the member opted in.
+ *
+ * The sweep runs every 5 minutes, so the 1-hour reminder lands 55–60 min
+ * ahead. A meet booked less than 2 hours out skips the day-ahead one, and a
+ * booking paid in the last 30 minutes is not reminded straight away — the
+ * payment confirmation has only just told them.
+ */
+async function sendReminders(now = new Date()) {
+  const recentPay = new Date(now.getTime() - 30 * 60000);
+
+  const dayAhead = await Booking.findAll({
+    where: {
+      status: "confirmed",
+      dayReminderSentAt: null,
+      reminderSentAt: null,
+      startAt: { [Op.between]: [new Date(now.getTime() + 2 * 3600e3), new Date(now.getTime() + REMINDER_DAY_HOURS * 3600e3)] },
+      [Op.or]: [{ paidAt: null }, { paidAt: { [Op.lt]: recentPay } }],
+    },
+    include: [PARTY_INCLUDE("customer"), PARTY_INCLUDE("companion")],
+  });
+  for (const b of dayAhead) {
+    await b.update({ dayReminderSentAt: now });
+    await remind(b, "day", now);
+  }
+
+  const hourAhead = await Booking.findAll({
+    where: { status: "confirmed", reminderSentAt: null, startAt: { [Op.between]: [now, new Date(now.getTime() + REMINDER_HOUR_MINUTES * 60000)] } },
+    include: [PARTY_INCLUDE("customer"), PARTY_INCLUDE("companion")],
+  });
+  for (const b of hourAhead) {
+    await b.update({ reminderSentAt: now, dayReminderSentAt: b.dayReminderSentAt || now });
+    await remind(b, "hour", now);
+  }
+  return dayAhead.length + hourAhead.length;
+}
+
+async function remind(b, kind, now) {
+  const when = kind === "day" ? whenText(b.startAt, now) : `in about an hour (${meetTime(b.startAt)})`;
+  const link = `/bookings/${b.id}`;
+  const url = `${env.clientUrl}${link}`;
+  const people = [
+    {
+      id: b.customerId,
+      other: b.companion?.fullName || "your Companion",
+      tip: "Your start code is on the booking page — show it to your Companion when you meet.",
+    },
+    {
+      id: b.companionId,
+      other: b.customer?.fullName || "your Customer",
+      tip: "Ask the Customer for their start code and enter it to begin the meet.",
+    },
+  ];
+  for (const p of people) {
+    await notify(p.id, {
+      type: "booking_reminder",
+      title: kind === "day" ? `Reminder: your meet with ${p.other} is ${when}` : `Your meet with ${p.other} starts in about an hour`,
+      body: `At ${b.meetingPlaceName}${b.meetingPlaceAddress ? `, ${b.meetingPlaceAddress}` : ""} · ${meetTime(b.startAt)}. ${p.tip}`,
+      link,
+      urgent: kind === "hour",
+      // Template meet_reminder: {{1}} name · {{2}} who · {{3}} when · {{4}} place · {{5}} link
+      whatsapp: { template: "reminder", params: (user) => [user.fullName.split(" ")[0], p.other, when, b.meetingPlaceName, url] },
+    });
+  }
+}
+
+/* ------------------------------ safety check-in ------------------------------ */
+
+const SAFETY_CHECK_MIN_MINUTES = 30;
+
+/** When the "Are you OK?" goes out: halfway, but at least 30 minutes in. */
+function safetyCheckDue(b) {
+  if (!b.startedAt) return null;
+  const started = new Date(b.startedAt).getTime();
+  const half = (new Date(b.endAt).getTime() - started) / 2;
+  return new Date(started + Math.max(half, SAFETY_CHECK_MIN_MINUTES * 60000));
+}
+
+/**
+ * Halfway through a meet both people are asked "Are you OK?". Tapping
+ * I'm safe is all it takes. Anyone who has not answered within the grace
+ * time raises an alert in the admin safety queue (not to their emergency
+ * contact — a missed tap is usually a phone in a pocket).
+ */
+async function safetyChecks(now = new Date()) {
+  let asked = 0;
+  let escalated = 0;
+  const live = await Booking.findAll({ where: { status: "in_progress", safetyCheckSentAt: null } });
+  for (const b of live) {
+    const due = safetyCheckDue(b);
+    if (!due || now < due || now >= new Date(b.endAt)) continue;
+    await b.update({ safetyCheckSentAt: now });
+    asked += 1;
+    for (const uid of [b.customerId, b.companionId]) {
+      await notify(uid, {
+        type: "safety_check",
+        title: "Are you OK? Tap I'm safe",
+        body: "A quick check halfway through your meet. If anything is wrong, press SOS on the booking page.",
+        link: `/bookings/${b.id}`,
+        urgent: true,
+      });
+    }
+  }
+
+  const grace = Number(await settings.get("safety_check_grace_minutes", 15));
+  const waiting = await Booking.findAll({
+    where: {
+      safetyCheckSentAt: { [Op.lt]: new Date(now - grace * 60000) },
+      safetyEscalatedAt: null,
+      [Op.or]: [{ customerSafeAt: null }, { companionSafeAt: null }],
+      status: { [Op.in]: ["in_progress", "completed", "disputed"] },
+    },
+  });
+  for (const b of waiting) {
+    await b.update({ safetyEscalatedAt: now });
+    const missing = [!b.customerSafeAt && b.customerId, !b.companionSafeAt && b.companionId].filter(Boolean);
+    for (const uid of missing) {
+      await SosAlert.create({ userId: uid, bookingId: b.id, kind: "missed_check_in", shareToken: crypto.randomBytes(24).toString("hex") });
+      escalated += 1;
+      logger.warn(`Safety: user ${uid} did not answer the check-in on booking ${b.id}.`);
+      await notify(uid, { type: "safety_check", title: "We did not hear back — are you OK?", body: "Our safety team has been told and may call you. Tap I'm safe on the booking page if all is well.", link: `/bookings/${b.id}`, urgent: true });
+    }
+  }
+  return { safetyAsked: asked, safetyEscalated: escalated };
+}
+
+/** "I'm safe": the answer to the check-in, any time during the meet. */
+async function markSafe(user, id) {
+  const b = await loadFor(user, id);
+  if (!["in_progress", "completed", "disputed"].includes(b.status) || !b.startedAt) throw conflict("This is for during a meet.");
+  const field = user.id === b.customerId ? "customerSafeAt" : "companionSafeAt";
+  if (!b[field]) await b.update({ [field]: new Date() });
+  // Answering after the alert closes it.
+  await SosAlert.update(
+    { status: "resolved", resolvedAt: new Date(), resolvedNote: "Member tapped I'm safe" },
+    { where: { bookingId: b.id, userId: user.id, kind: "missed_check_in", status: "active" } }
+  );
   return bookingJson(await loadFor(user, id), user.id);
 }
 
@@ -684,14 +1002,7 @@ async function sweep() {
     await notify(b.companionId, { type: "booking_expired", title: `Booking #${b.id} expired`, body: "The Customer did not pay in time.", link: `/bookings/${b.id}` });
   }
 
-  const soon = await Booking.findAll({
-    where: { status: "confirmed", reminderSentAt: null, startAt: { [Op.between]: [now, new Date(now.getTime() + 2 * 3600e3)] } },
-  });
-  for (const b of soon) {
-    await b.update({ reminderSentAt: now });
-    await notify(b.customerId, { type: "booking_reminder", title: "Your meet starts within 2 hours", body: `At ${b.meetingPlaceName}. Your start code is on the booking page — show it to your Companion when you meet.`, link: `/bookings/${b.id}`, urgent: true });
-    await notify(b.companionId, { type: "booking_reminder", title: "Your meet starts within 2 hours", body: `At ${b.meetingPlaceName}. Ask the Customer for their start code and enter it to begin.`, link: `/bookings/${b.id}`, urgent: true });
-  }
+  const reminded = await sendReminders(now);
 
   // Meets in progress end by themselves when the booked time runs out.
   const overrun = await Booking.findAll({ where: { status: "in_progress", endAt: { [Op.lt]: now } } });
@@ -717,6 +1028,10 @@ async function sweep() {
   });
   for (const p of ripe) {
     await Conversation.update({ isClosed: true }, { where: { bookingId: p.bookingId } });
+    // The meet cleared its complaint window: a referral reward may be due.
+    for (const uid of [p.booking.customerId, p.booking.companionId]) {
+      await referrals.rewardIfDue(uid).catch((e) => logger.error(`Referral reward for ${uid} failed: ${e.message}`));
+    }
     if (autoRelease) {
       await releasePayout(p.bookingId);
     } else {
@@ -725,7 +1040,19 @@ async function sweep() {
     }
   }
 
-  return { expired: stalePending.length + unpaid.length, reminded: soon.length, ended: overrun.length, noShows: noShows.length, payoutsReady: ripe.length };
+  // Payouts held because the bank/UPI was just changed go out once 24 h pass.
+  const cooling = await Payout.findAll({ where: { status: "on_hold", note: PAYOUT_CHANGE_NOTE } });
+  for (const p of cooling) await releasePayout(p.bookingId);
+
+  // Checkouts left unfinished for an hour give their wallet money back.
+  const abandoned = await Payment.findAll({
+    where: { purpose: "booking", status: "created", walletPaise: { [Op.gt]: 0 }, createdAt: { [Op.lt]: new Date(now - 60 * 60000) } },
+  });
+  for (const p of abandoned) await paymentService.releaseHeldWallet(p, "Checkout not completed within an hour");
+
+  const safety = await safetyChecks(now);
+
+  return { expired: stalePending.length + unpaid.length, reminded, ended: overrun.length, noShows: noShows.length, payoutsReady: ripe.length, walletReleased: abandoned.length, ...safety };
 }
 
 module.exports = {
@@ -746,5 +1073,13 @@ module.exports = {
   get,
   review,
   sweep,
+  sendReminders,
+  whenText,
+  safetyChecks,
+  markSafe,
+  checkLowRating,
+  quote,
   bookingJson,
+  PARTY_INCLUDE,
+  partyJson,
 };

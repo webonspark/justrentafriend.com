@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { FiCheckCircle, FiFlag, FiMapPin, FiShield, FiSlash, FiStar } from "react-icons/fi";
+import { FiCheckCircle, FiFlag, FiHeart, FiMapPin, FiShield, FiSlash, FiStar, FiZap } from "react-icons/fi";
 import { api, ApiError } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import { WEEKDAYS, dateOnly, inr, isoDate } from "../../lib/format";
 import { Alert, Avatar, Badge, Button, Card, EmptyState, Field, Price, Skeleton } from "../../components/ui";
 import ReportModal from "../../components/shared/ReportModal";
+import PlaceMap from "../../components/shared/PlaceMap";
 
 /**
  * A Companion's public page, and the booking request form.
@@ -76,6 +77,8 @@ export default function CompanionProfile() {
           <div className="mb-2 flex flex-wrap items-center gap-3">
             <h1 className="m-0 text-[2rem]">{c.firstName}, {c.age}</h1>
             {c.verified && <Badge tone="good"><FiCheckCircle className="mr-1 inline" size={12} />Verified</Badge>}
+            {c.availableNow && <Badge tone="accent"><FiZap className="mr-1 inline" size={12} />Available now</Badge>}
+            <SaveHeart companionId={c.id} name={c.firstName} />
           </div>
           <p className="mb-4 flex flex-wrap items-center gap-3 text-muted">
             <span className="flex items-center gap-1"><FiMapPin size={14} /> {c.area}, {c.city}{c.distanceKm != null && ` · ${c.distanceKm} km`}</span>
@@ -167,12 +170,25 @@ function Section({ title, children }) {
 function BookingForm({ c }) {
   const navigate = useNavigate();
   const [catalog, setCatalog] = useState(null);
-  const [form, setForm] = useState({ serviceId: c.services[0]?.id || "", date: "", startTime: "", hours: 1, meetingPlaceType: "cafe", meetingPlaceName: "", meetingPlaceAddress: "", note: "" });
+  const [form, setForm] = useState({ serviceId: c.services[0]?.id || "", date: "", startTime: "", hours: 1, meetingPlaceType: "cafe", meetingPlaceName: "", meetingPlaceAddress: "", placeId: "", note: "" });
+  const [places, setPlaces] = useState(null);
+  const [placeSearch, setPlaceSearch] = useState("");
   const [slots, setSlots] = useState(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
 
   useEffect(() => { api.catalog().then(setCatalog).catch(() => {}); }, []);
+  useEffect(() => { api.places({ city: c.city }).then((d) => setPlaces(d.places)).catch(() => setPlaces([])); }, [c.city]);
+
+  /* The Companion's own area first, then the rest, each by name. */
+  const placeList = useMemo(() => {
+    const q = placeSearch.trim().toLowerCase();
+    return (places || [])
+      .filter((p) => !q || `${p.name} ${p.area || ""} ${p.address || ""}`.toLowerCase().includes(q))
+      .sort((a, b) => Number(b.area === c.area) - Number(a.area === c.area) || String(a.area).localeCompare(String(b.area)) || a.name.localeCompare(b.name));
+  }, [places, placeSearch, c.area]);
+  const usePlaces = places && places.length > 0;
+  const chosenPlace = usePlaces ? places.find((p) => String(p.id) === String(form.placeId)) : null;
 
   useEffect(() => {
     if (!form.date) return;
@@ -195,7 +211,10 @@ function BookingForm({ c }) {
     setProblem("");
     setBusy(true);
     try {
-      const b = await api.requestBooking({ ...form, companionId: c.id, hours: Number(form.hours), serviceId: Number(form.serviceId) });
+      const body = { ...form, companionId: c.id, hours: Number(form.hours), serviceId: Number(form.serviceId) };
+      if (usePlaces) body.placeId = Number(form.placeId);
+      else delete body.placeId;
+      const b = await api.requestBooking(body);
       navigate(`/bookings/${b.id}`, { state: { justRequested: true } });
     } catch (err) {
       setProblem(err instanceof ApiError ? err.message : "Could not send the request.");
@@ -223,11 +242,26 @@ function BookingForm({ c }) {
       <Field as="select" label="Duration" id="bk-hours" value={form.hours} onChange={set("hours")}>
         {hourOptions.map((h) => <option key={h} value={h}>{h} {h === 1 ? "hour" : "hours"}</option>)}
       </Field>
-      <Field as="select" label="Meeting place (public places only)" id="bk-ptype" value={form.meetingPlaceType} onChange={set("meetingPlaceType")}>
-        {(catalog?.meetingPlaceTypes || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-      </Field>
-      <Field label="Place name" id="bk-pname" placeholder="e.g. Third Wave Coffee, 100 Feet Road" value={form.meetingPlaceName} onChange={set("meetingPlaceName")} required />
-      <Field label="Address or landmark (optional)" id="bk-paddr" value={form.meetingPlaceAddress} onChange={set("meetingPlaceAddress")} />
+      {usePlaces ? (
+        <>
+          <Field label="Meeting place — busy public places we have checked" id="bk-psearch" placeholder="Search: café, mall, park, area…" value={placeSearch} onChange={(e) => setPlaceSearch(e.target.value)} />
+          <Field as="select" label="Choose the place" id="bk-place" value={form.placeId} onChange={set("placeId")} required>
+            <option value="">{placeList.length ? "Choose a place" : "No match — clear the search"}</option>
+            {placeList.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}{p.area ? ` · ${p.area}` : ""}{p.area === c.area ? " (near " + c.firstName + ")" : ""}</option>
+            ))}
+          </Field>
+          {chosenPlace && <div className="mb-4"><PlaceMap latitude={chosenPlace.latitude} longitude={chosenPlace.longitude} name={`${chosenPlace.name}${chosenPlace.address ? `, ${chosenPlace.address}` : ""}`} height={170} /></div>}
+        </>
+      ) : (
+        <>
+          <Field as="select" label="Meeting place (public places only)" id="bk-ptype" value={form.meetingPlaceType} onChange={set("meetingPlaceType")}>
+            {(catalog?.meetingPlaceTypes || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </Field>
+          <Field label="Place name" id="bk-pname" placeholder="e.g. Third Wave Coffee, 100 Feet Road" value={form.meetingPlaceName} onChange={set("meetingPlaceName")} required />
+          <Field label="Address or landmark (optional)" id="bk-paddr" value={form.meetingPlaceAddress} onChange={set("meetingPlaceAddress")} />
+        </>
+      )}
       <Field as="textarea" rows={2} label="Note to the Companion (optional)" id="bk-note" value={form.note} onChange={set("note")} />
 
       <div className="mb-4 rounded-xl border border-ink-line p-3 text-sm">
@@ -235,8 +269,30 @@ function BookingForm({ c }) {
         <p className="m-0 mt-1 text-xs text-muted">You pay only after {c.firstName} accepts. The money is held safely until after your meet.</p>
       </div>
       <Alert>{problem}</Alert>
-      <Button type="submit" block loading={busy} disabled={!form.startTime || !form.meetingPlaceName}>Request booking</Button>
+      <Button type="submit" block loading={busy} disabled={!form.startTime || (usePlaces ? !form.placeId : !form.meetingPlaceName)}>Request booking</Button>
       <p className="mb-0 mt-3 flex items-center gap-1 text-xs text-muted"><FiShield size={12} /> Platonic time only. Meet in public. Never pay outside the app.</p>
     </Card>
+  );
+}
+
+/** Heart: save this Companion to favourites. */
+function SaveHeart({ companionId, name }) {
+  const [on, setOn] = useState(null);
+  useEffect(() => {
+    api.favorites().then((d) => setOn(d.favorites.some((f) => f.id === companionId))).catch(() => setOn(false));
+  }, [companionId]);
+  if (on === null) return null;
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      aria-label={on ? `Remove ${name} from favourites` : `Save ${name} to favourites`}
+      title={on ? "Saved — find them under Favourites" : "Save to favourites"}
+      onClick={async () => { await api.favorite(companionId, !on); setOn(!on); }}
+      className="inline-flex items-center gap-1 rounded-full border border-ink-line px-3 py-1 text-sm"
+      style={{ background: "none", color: on ? "var(--rose)" : undefined }}
+    >
+      <FiHeart style={on ? { fill: "currentColor" } : undefined} /> {on ? "Saved" : "Save"}
+    </button>
   );
 }

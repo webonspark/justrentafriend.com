@@ -109,7 +109,21 @@ module.exports = (sequelize) => {
 
       /* Escrow: the money is held from payment until this is set. */
       payoutReleasedAt: { type: DataTypes.DATE, allowNull: true },
+      // reminderSentAt = the 1-hour reminder; dayReminderSentAt = the 24-hour one.
       reminderSentAt: { type: DataTypes.DATE, allowNull: true },
+      dayReminderSentAt: { type: DataTypes.DATE, allowNull: true },
+
+      // A checked public place (public_places); name/address are copied in.
+      placeId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
+      couponId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
+      discountPaise: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, defaultValue: 0 },
+
+      /* "Are you OK?" halfway through the meet. Each side taps I'm safe;
+         if either has not within the grace time, staff get an alert. */
+      safetyCheckSentAt: { type: DataTypes.DATE, allowNull: true },
+      customerSafeAt: { type: DataTypes.DATE, allowNull: true },
+      companionSafeAt: { type: DataTypes.DATE, allowNull: true },
+      safetyEscalatedAt: { type: DataTypes.DATE, allowNull: true },
     },
     {
       tableName: "bookings",

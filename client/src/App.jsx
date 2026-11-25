@@ -23,6 +23,9 @@ import {
  */
 
 const Home = lazy(() => import("./pages/Home"));
+const Dashboard = lazy(() => import("./pages/dashboard/Dashboard"));
+const Wallet = lazy(() => import("./pages/wallet/Wallet"));
+const Favorites = lazy(() => import("./pages/favorites/Favorites"));
 const SignUp = lazy(() => import("./pages/auth/SignUp"));
 const Login = lazy(() => import("./pages/auth/Login"));
 const VerifyOtp = lazy(() => import("./pages/auth/VerifyOtp"));
@@ -105,6 +108,9 @@ export default function App() {
                 <Route path="/profile" element={<MyProfile />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/notifications" element={<Notifications />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/wallet" element={<Wallet />} />
+                <Route path="/favorites" element={<Favorites />} />
                 <Route path="/payments-history" element={<PaymentsHistory />} />
                 <Route path="/earnings" element={<Earnings />} />
               </Route>

@@ -7,6 +7,8 @@ const env = require("../../config/env");
 const { addGst } = require("../../lib/money");
 const { badRequest, notFound, forbidden, conflict } = require("../../lib/errors");
 const { notify } = require("../../lib/notify");
+const wallet = require("../../lib/wallet");
+const coupons = require("../../lib/coupons");
 
 /**
  * Money coming in: memberships and bookings.
@@ -70,33 +72,103 @@ async function startMembership(user, planId) {
   return checkoutJson(result, order, user, `${plan.name} membership`);
 }
 
-/** Starts payment for an accepted booking. */
-async function startBooking(user, booking) {
-  const gstOnCommission = Boolean(await settings.get("gst_on_commission", false));
+/**
+ * What an accepted booking will cost, with an optional coupon and wallet.
+ *
+ *   amount + GST (if any) − coupon discount − wallet = what the card pays
+ *
+ * The coupon comes off the platform's side; the Companion's share is the
+ * same either way.
+ */
+async function quoteBooking(user, booking, { couponCode = null, useWallet = false } = {}) {
+  const gstOnCommission = String(await settings.get("gst_on_commission", false)) === "true";
   const gstPct = Number(await settings.get("gst_pct", env.money.gstPct));
   const gstPaise = gstOnCommission ? Math.round((Number(booking.commissionPaise) * gstPct) / 100) : 0;
-  const totalPaise = Number(booking.amountPaise) + gstPaise;
+  const amountPaise = Number(booking.amountPaise);
 
-  // Re-use an unpaid order for the same booking rather than stacking them.
-  const open = await Payment.findOne({ where: { bookingId: booking.id, status: "created" } });
-  if (open && Number(open.totalPaise) === totalPaise) {
-    return checkoutJson(open, { orderId: open.gatewayOrderId, gateway: open.gateway, keyId: env.payments.razorpayKeyId }, user, `Booking #${booking.id}`);
+  let coupon = null;
+  let discountPaise = 0;
+  if (couponCode) {
+    const r = await coupons.check(couponCode, user, booking);
+    coupon = r.coupon;
+    discountPaise = r.discountPaise;
+  }
+  const afterDiscount = amountPaise + gstPaise - discountPaise;
+  const walletBalancePaise = await wallet.balance(user.id);
+  const walletPaise = useWallet ? Math.min(walletBalancePaise, afterDiscount) : 0;
+  return {
+    amountPaise,
+    gstPaise,
+    discountPaise,
+    coupon: coupon ? { code: coupon.code, description: coupon.description } : null,
+    couponId: coupon?.id || null,
+    walletBalancePaise,
+    walletPaise,
+    payablePaise: afterDiscount - walletPaise,
+  };
+}
+
+/** Puts wallet money held by an unfinished checkout back. Safe to call twice. */
+async function releaseHeldWallet(payment, why = "Checkout not completed") {
+  const fresh = await Payment.findByPk(payment.id);
+  if (!fresh || fresh.status === "paid" || !Number(fresh.walletPaise) || fresh.failureReason === "wallet_released") return;
+  await sequelize.transaction(async (t) => {
+    await wallet.credit(fresh.userId, Number(fresh.walletPaise), { kind: "release", bookingId: fresh.bookingId, paymentId: fresh.id, note: why }, t);
+    await fresh.update({ status: "failed", failureReason: "wallet_released" }, { transaction: t });
+  });
+}
+
+/**
+ * Starts payment for an accepted booking. Wallet money is set aside at once
+ * (so it cannot be spent twice); if the wallet covers everything, the
+ * booking is confirmed straight away with no card step.
+ */
+async function startBooking(user, booking, opts = {}) {
+  const q = await quoteBooking(user, booking, opts);
+
+  // A new checkout replaces any unfinished one for this booking.
+  const open = await Payment.findAll({ where: { bookingId: booking.id, status: "created" } });
+  for (const o of open) {
+    if (Number(o.walletPaise)) await releaseHeldWallet(o, "Checkout restarted");
+    else await o.update({ status: "failed", failureReason: "Replaced by a new checkout" });
   }
 
-  const order = await gateway.createOrder({ amountPaise: totalPaise, receipt: `bk-${booking.id}` });
-  const payment = await Payment.create({
+  const description = `Booking #${booking.id}`;
+  const base = {
     userId: user.id,
     purpose: "booking",
     bookingId: booking.id,
-    gateway: order.gateway,
-    gatewayOrderId: order.orderId,
     amountPaise: booking.amountPaise,
-    gstPaise,
-    totalPaise,
+    gstPaise: q.gstPaise,
+    totalPaise: q.payablePaise,
+    walletPaise: q.walletPaise,
+    discountPaise: q.discountPaise,
+    couponId: q.couponId,
     status: "created",
+  };
+
+  if (q.payablePaise === 0) {
+    // Wallet and/or coupon cover it all: no gateway.
+    const payment = await sequelize.transaction(async (t) => {
+      const p = await Payment.create({ ...base, gateway: "wallet" }, { transaction: t });
+      if (q.walletPaise) await wallet.debit(user.id, q.walletPaise, { kind: "payment", bookingId: booking.id, paymentId: p.id, note: description }, t);
+      return p;
+    });
+    await apply(payment, { gatewayPaymentId: `wallet_${payment.id}`, signature: null });
+    return { paid: true, paymentId: payment.id, amountPaise: 0, quote: q };
+  }
+
+  const order = await gateway.createOrder({ amountPaise: q.payablePaise, receipt: `bk-${booking.id}-${Date.now() % 1e6}` });
+  const payment = await sequelize.transaction(async (t) => {
+    const p = await Payment.create({ ...base, gateway: order.gateway, gatewayOrderId: order.orderId }, { transaction: t });
+    if (q.walletPaise) await wallet.debit(user.id, q.walletPaise, { kind: "payment", bookingId: booking.id, paymentId: p.id, note: `${description} (held during checkout)` }, t);
+    return p;
   });
-  return checkoutJson(payment, order, user, `Booking #${booking.id}`);
+  return { ...checkoutJson(payment, order, user, description), quote: q };
 }
+
+/** Everything the Customer paid for a booking: card + wallet. */
+const paidValue = (p) => Number(p.totalPaise || 0) + Number(p.walletPaise || 0);
 
 function checkoutJson(payment, order, user, description) {
   return {
@@ -119,6 +191,7 @@ async function verifyAndApply(user, { paymentId, gatewayPaymentId, signature }) 
 
   const ok = gateway.verify({ orderId: payment.gatewayOrderId, paymentId: gatewayPaymentId, signature });
   if (!ok) {
+    if (Number(payment.walletPaise)) await releaseHeldWallet(payment, "Payment could not be verified");
     await payment.update({ status: "failed", failureReason: "Signature did not verify" });
     throw badRequest("The payment could not be verified. If money left your account it will be refunded automatically.");
   }
@@ -192,6 +265,10 @@ function summary(p) {
     gstPaise: Number(p.gstPaise),
     totalPaise: Number(p.totalPaise),
     refundedPaise: p.refundedPaise === null ? null : Number(p.refundedPaise),
+    walletPaise: Number(p.walletPaise || 0),
+    discountPaise: Number(p.discountPaise || 0),
+    refundedToWalletPaise: Number(p.refundedToWalletPaise || 0),
+    gateway: p.gateway,
     invoiceNo: p.invoiceNo,
     paidAt: p.paidAt,
     createdAt: p.createdAt,
@@ -236,6 +313,8 @@ async function invoiceHtml(user, paymentId, { asAdmin = false } = {}) {
       [`Platform service fee (${Number(b?.commissionPct)}%) · SAC 998599`, inr(Number(b?.commissionPaise))],
       [`GST @ ${gstPct}% on platform fee`, inr(p.gstPaise)],
     ];
+    if (Number(p.discountPaise)) lines.push([`Coupon discount`, `− ${inr(p.discountPaise)}`]);
+    if (Number(p.walletPaise)) lines.push([`Paid from wallet`, `− ${inr(p.walletPaise)}`]);
   }
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>${p.invoiceNo}</title>
@@ -251,7 +330,7 @@ td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}td:last-child,th
 <strong>Billed to</strong> ${esc(p.payer?.fullName)} · ${esc(p.payer?.email)}</p>
 <table><tr><th>Description</th><th>Amount</th></tr>
 ${lines.map(([d, a]) => `<tr><td>${d}</td><td>${a}</td></tr>`).join("")}
-<tr class="total"><td>Total paid</td><td>${inr(p.totalPaise)}</td></tr>
+<tr class="total"><td>${Number(p.walletPaise) ? "Paid by card / UPI" : "Total paid"}</td><td>${inr(p.totalPaise)}</td></tr>
 ${p.refundedPaise ? `<tr><td>Refunded</td><td>− ${inr(p.refundedPaise)}</td></tr>` : ""}
 </table>
 <p class="muted">Payment reference ${esc(p.gatewayPaymentId)} via ${esc(p.gateway)}. This is a computer-generated invoice.</p>
@@ -273,6 +352,9 @@ module.exports = {
   bookingHooks,
   startMembership,
   startBooking,
+  quoteBooking,
+  releaseHeldWallet,
+  paidValue,
   verifyAndApply,
   apply,
   webhook,

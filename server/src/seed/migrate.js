@@ -79,6 +79,8 @@ async function upgrade() {
     const changes = force ? [] : await upgrade();
     const newSettings = await require("../lib/settings").ensureDefaults();
     if (newSettings.length) changes.push(`settings added: ${newSettings.join(", ")}`);
+    const places = await require("../lib/placesDefault").ensureDefaultPlaces(require("../config/env").brand.city);
+    if (places) changes.push(`${places} starter public places added`);
 
     const message = force
       ? "Every table was dropped and rebuilt."

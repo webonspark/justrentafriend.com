@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Offcanvas } from "react-bootstrap";
-import { FiFilter, FiNavigation, FiSearch, FiX } from "react-icons/fi";
+import { FiFilter, FiHeart, FiNavigation, FiSearch, FiStar, FiX, FiZap } from "react-icons/fi";
 import { api, ApiError } from "../../services/api";
 import { CITY } from "../../config/brand";
 import { isoDate } from "../../lib/format";
@@ -24,7 +24,7 @@ const SORTS = [
   ["newest", "Newest"],
 ];
 
-const FILTER_KEYS = ["q", "area", "minPrice", "maxPrice", "gender", "minAge", "maxAge", "language", "minRating", "date", "verified", "maxKm"];
+const FILTER_KEYS = ["q", "area", "minPrice", "maxPrice", "gender", "minAge", "maxAge", "language", "minRating", "date", "verified", "maxKm", "interests", "today", "availableNow"];
 
 export default function Discover() {
   const [params, setParams] = useSearchParams();
@@ -108,6 +108,7 @@ export default function Discover() {
               aria-label="Search by name"
             />
           </div>
+          <Button variant="outline" to="/favorites"><FiHeart /> Favourites</Button>
           <select className="k-input w-auto" value={query.sort || ""} onChange={(e) => set("sort", e.target.value)} aria-label="Sort">
             <option value="">Best match</option>
             {SORTS.map(([v, l]) => (
@@ -133,6 +134,17 @@ export default function Discover() {
         </aside>
 
         <section>
+          <div className="mb-4 flex flex-wrap gap-2" aria-label="Quick filters">
+            <Button size="sm" variant={query.availableNow === "1" ? "primary" : "outline"} onClick={() => set("availableNow", query.availableNow === "1" ? "" : "1")}>
+              <FiZap /> Available now
+            </Button>
+            <Button size="sm" variant={query.today === "1" ? "primary" : "outline"} onClick={() => set("today", query.today === "1" ? "" : "1")}>
+              Free today
+            </Button>
+            <Button size="sm" variant={query.minRating === "4.5" ? "primary" : "outline"} onClick={() => set("minRating", query.minRating === "4.5" ? "" : "4.5")}>
+              <FiStar /> 4.5+
+            </Button>
+          </div>
           <Alert>{problem}</Alert>
           {data && (
             <p className="mb-4 text-sm text-muted">
@@ -247,8 +259,17 @@ function Filters({ query, set, catalog, areas, onNearMe, locating }) {
         </div>
       </div>
       {sel("language", "Language", (catalog?.languages || []).map((l) => [l, l]))}
+      {sel("interests", "Interest", (catalog?.interests || []).map((i) => [String(i.id), i.name]))}
       {sel("minRating", "Rating", [["4.5", "4.5 and up"], ["4", "4 and up"], ["3", "3 and up"]])}
       <Field label="Available on" id="f-date" type="date" min={isoDate()} value={query.date || ""} onChange={(e) => set("date", e.target.value)} />
+      <label className="mb-2 flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={query.today === "1"} onChange={(e) => set("today", e.target.checked ? "1" : "")} />
+        Free today
+      </label>
+      <label className="mb-2 flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={query.availableNow === "1"} onChange={(e) => set("availableNow", e.target.checked ? "1" : "")} />
+        Available now
+      </label>
       <label className="mb-5 flex items-center gap-2 text-sm">
         <input type="checkbox" checked={query.verified === "1"} onChange={(e) => set("verified", e.target.checked ? "1" : "")} />
         Verified only

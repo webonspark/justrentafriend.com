@@ -26,7 +26,7 @@ const { logger } = require("../../lib/logger");
 const router = express.Router();
 router.use(requireAuth);
 
-const PREFS = ["emailNotifications", "showOnlineStatus", "minAge", "maxAge", "maxDistanceKm", "verifiedOnly"];
+const PREFS = ["emailNotifications", "showOnlineStatus", "whatsappReminders", "minAge", "maxAge", "maxDistanceKm", "verifiedOnly"];
 
 router.get(
   "/preferences",

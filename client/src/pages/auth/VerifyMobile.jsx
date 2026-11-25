@@ -14,7 +14,7 @@ import { Alert, Button, Field } from "../../components/ui";
 export default function VerifyMobile() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
-  const goingTo = useLocation().state?.from?.pathname || "/discover";
+  const goingTo = useLocation().state?.from?.pathname || "/dashboard";
   const [code, setCode] = useState("");
   const [devCode, setDevCode] = useState("");
   const [busy, setBusy] = useState(false);

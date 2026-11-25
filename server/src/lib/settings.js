@@ -49,6 +49,12 @@ function defaults() {
     ["grievance_officer_name", "Grievance Officer", "Grievance Officer's name (IT Rules 2021)", "company"],
     ["grievance_officer_email", env.brand.grievanceEmail, "Grievance Officer's email", "company"],
     ["maintenance_mode", false, "Show the maintenance page to everyone", "general"],
+    ["referral_reward_paise", 10000, "Refer a friend: wallet credit each person gets, in paise (10000 = ₹100)", "growth"],
+    ["referral_max_rewards", 50, "Refer a friend: most rewards one member can earn", "growth"],
+    ["safety_check_grace_minutes", 15, "Safety check-in: minutes to tap \"I'm safe\" before staff are alerted", "safety"],
+    ["low_rating_threshold", 3, "Ratings: average below this sends the member for review", "safety"],
+    ["low_rating_min_reviews", 5, "Ratings: only judge the average after this many reviews", "safety"],
+    ["public_places_only", true, "Bookings must use a place from the checked public-places list", "safety"],
   ];
 }
 

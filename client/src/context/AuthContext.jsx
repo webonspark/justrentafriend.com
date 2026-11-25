@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, setAccessToken, onUnauthorized, setReadOnlyView } from "../services/api";
-import { connectSocket, disconnectSocket } from "../lib/socket";
+import { connectSocket, disconnectSocket, onSessionEnded } from "../lib/socket";
 
 /**
  * Who is signed in, for the whole app.
@@ -85,6 +85,14 @@ export function AuthProvider({ children }) {
         if (alive) setReady(true);
       }
     })();
+
+    // Staff signed this member out (or suspended them): leave at once.
+    onSessionEnded((reason) => {
+      disconnectSocket();
+      setAccessToken(null);
+      if (alive) setUser(null);
+      window.location.assign(`/login?ended=${encodeURIComponent(reason || "signed_out")}`);
+    });
 
     // If a refresh ever fails mid-session, drop straight to signed out.
     onUnauthorized(() => {

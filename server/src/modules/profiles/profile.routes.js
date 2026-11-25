@@ -3,6 +3,7 @@ const service = require("./profile.service");
 const { wrap } = require("../../lib/handler");
 const { imageUpload } = require("../../lib/uploads");
 const { requireAuth, optionalAuth } = require("../../middleware/auth");
+const { otpLimiter } = require("../../middleware/rateLimit");
 
 /**
  *   GET    /profiles/catalog            services, interests, languages, place types
@@ -59,7 +60,9 @@ router.post(
   imageUpload.single("selfie"),
   wrap(async (req, res) => res.status(201).json(await service.submitSelfie(req.user, req.file)))
 );
+router.put("/me/available-now", requireAuth, wrap(async (req, res) => res.json(await service.setAvailableNow(req.user, req.body.hours))));
 router.post("/me/submit", requireAuth, wrap(async (req, res) => res.json(await service.submitForApproval(req.user))));
+router.post("/me/payout-account/code", requireAuth, otpLimiter, wrap(async (req, res) => res.json(await service.sendPayoutCode(req.user))));
 router.put(
   "/me/payout-account",
   requireAuth,

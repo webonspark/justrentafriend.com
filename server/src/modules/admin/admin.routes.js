@@ -24,6 +24,9 @@ const {
   AdminUser,
   Subscription,
   RefreshToken,
+  CouponRedemption,
+  Coupon,
+  PublicPlace,
 } = require("../../models");
 const env = require("../../config/env");
 const settings = require("../../lib/settings");
@@ -32,12 +35,22 @@ const { requireAdmin, requireAdminRole } = require("../../middleware/auth");
 const { record, recordView } = require("../../lib/audit");
 const { publicUrl, absolute, remove: removeUpload } = require("../../lib/uploads");
 const { notify } = require("../../lib/notify");
+const realtime = require("../../lib/realtime");
+
+/** Ends every session a member has, and logs out their open tabs now. */
+async function endSessions(userId, reason) {
+  await revokeAllForUser(userId);
+  realtime.kick(userId, reason);
+}
 const { revokeAllForUser, signImpersonationToken, IMPERSONATION_MINUTES } = require("../../lib/tokens");
 const { badRequest, notFound, conflict } = require("../../lib/errors");
 const bookingService = require("../bookings/booking.service");
 const paymentService = require("../payments/payment.service");
 const profileService = require("../profiles/profile.service");
 const authService = require("../auth/auth.service");
+const walletLib = require("../../lib/wallet");
+const couponsLib = require("../../lib/coupons");
+const { placeJson } = require("../growth/growth.routes");
 const { sendMail } = require("../../lib/mailer");
 const { sendSms } = require("../../lib/messaging");
 
@@ -159,6 +172,8 @@ const memberRow = (u) => ({
   area: u.profile?.area,
   createdAt: u.createdAt,
   lastLoginAt: u.lastLoginAt,
+  online: realtime.isOnline(u.id),
+  lastSeenAt: u.profile?.lastSeenAt || null,
   emailVerified: u.emailVerified,
   mobileVerified: u.mobileVerified,
   strikeCount: u.strikeCount,
@@ -185,6 +200,8 @@ function memberFilters(qs) {
   if (qs.emailVerified) where.emailVerified = qs.emailVerified === "yes";
   if (qs.mobileVerified) where.mobileVerified = qs.mobileVerified === "yes";
   if (qs.supportAccess === "yes") where.supportAccessUntil = { [Op.gt]: new Date() };
+  if (qs.online === "yes") where.id = { [Op.in]: realtime.onlineIds() };
+  if (qs.online === "no") where.id = { [Op.notIn]: realtime.onlineIds().length ? realtime.onlineIds() : [0] };
   if (qs.q) {
     const q = `%${String(qs.q).trim()}%`;
     where[Op.or] = [{ fullName: { [Op.like]: q } }, { email: { [Op.like]: q } }, { mobile: { [Op.like]: q } }];
@@ -192,7 +209,7 @@ function memberFilters(qs) {
   const id = {};
   if (Number(qs.idFrom)) id[Op.gte] = Number(qs.idFrom);
   if (Number(qs.idTo)) id[Op.lte] = Number(qs.idTo);
-  if (Object.getOwnPropertySymbols(id).length) where.id = id;
+  if (Object.getOwnPropertySymbols(id).length) where.id = { ...(where.id || {}), ...id };
   const joined = {};
   if (/^\d{4}-\d{2}-\d{2}$/.test(qs.joinedFrom || "")) joined[Op.gte] = new Date(`${qs.joinedFrom}T00:00:00+05:30`);
   if (/^\d{4}-\d{2}-\d{2}$/.test(qs.joinedTo || "")) joined[Op.lte] = new Date(`${qs.joinedTo}T23:59:59+05:30`);
@@ -234,7 +251,7 @@ router.get(
     }
     const { limit, offset, page } = paging(req.query, { max: 200, def: 20 });
     const { rows, count } = await User.findAndCountAll({ ...f, limit, offset, distinct: true });
-    res.json({ total: count, page, limit, users: rows.map(memberRow) });
+    res.json({ total: count, page, limit, onlineNow: realtime.onlineIds().length, users: rows.map(memberRow) });
   })
 );
 
@@ -268,6 +285,10 @@ router.get(
         mobileVerified: u.mobileVerified,
         strikeCount: u.strikeCount,
         adminNotes: u.adminNotes,
+        walletPaise: Number(u.walletPaise || 0),
+        referralCode: u.referralCode,
+        referredById: u.referredById,
+        ratingReviewAt: u.profile?.ratingReviewAt || null,
       },
       editable: {
         fullName: u.fullName,
@@ -312,7 +333,7 @@ router.post(
     const status = req.body.status;
     if (!["active", "warned", "suspended", "banned"].includes(status)) throw badRequest("Choose a status.");
     await u.update({ status });
-    if (["suspended", "banned"].includes(status)) await revokeAllForUser(u.id);
+    if (["suspended", "banned"].includes(status)) await endSessions(u.id, status);
     await record(req, { action: `user.${status}`, entityType: "user", entityId: u.id, detail: req.body.note || null });
     if (status === "warned") {
       await notify(u.id, { type: "warning", title: "A warning from our safety team", body: req.body.note || "Please review our community guidelines.", link: "/community-guidelines" });
@@ -464,7 +485,7 @@ router.post(
 
     const old = u[kind];
     await u.update(kind === "email" ? { email: value, emailVerified: false } : { mobile: value, mobileVerified: false });
-    await revokeAllForUser(u.id);
+    await endSessions(u.id, "contact_changed");
 
     const mask = kind === "email" ? value.replace(/^(.).*(@.*)$/, "$1•••$2") : `••••${value.slice(-4)}`;
     const warning = `The ${kind} on your ${env.brand.name} account was changed to ${mask} by our support team. If you did not ask for this, contact ${env.brand.supportEmail} straight away.`;
@@ -534,7 +555,7 @@ router.post(
   wrap(async (req, res) => {
     const u = await User.findByPk(req.params.id);
     if (!u) throw notFound();
-    await revokeAllForUser(u.id);
+    await endSessions(u.id, "signed_out");
     await record(req, { action: "user.force_sign_out", entityType: "user", entityId: u.id, detail: req.body.reason || null });
     res.json({ ok: true });
   })
@@ -976,9 +997,11 @@ router.post(
       await Payout.update({ status: "pending", note: null }, { where: { bookingId: b.id, status: "on_hold" } });
       await bookingService.finish(b, "admin released");
       await bookingService.releasePayout(b.id);
+      for (const uid of [b.customerId, b.companionId]) await require("../../lib/referrals").rewardIfDue(uid).catch(() => {});
     } else if (outcome === "refund_full" || outcome === "refund_partial") {
       const pct = outcome === "refund_full" ? 100 : Math.min(Math.max(Number(req.body.refundPct) || 0, 1), 99);
-      const refunded = payment ? await bookingService.refundPayment(payment, Math.round((money(payment.totalPaise) * pct) / 100)) : 0;
+      const toWallet = req.body.refundTo === "wallet";
+      const refunded = payment ? await bookingService.refundPayment(payment, Math.round((paymentService.paidValue(payment) * pct) / 100), { toWallet }) : 0;
       await b.update({ status: pct === 100 ? "cancelled" : "completed", completedAt: pct === 100 ? null : new Date(), cancelledAt: pct === 100 ? new Date() : null, refundPaise: refunded, disputeResolution: note || `Refunded ${pct}%` });
       if (pct < 100) {
         const kept = Math.round((money(b.amountPaise) * (100 - pct)) / 100);
@@ -1010,8 +1033,9 @@ router.post(
     if (!b) throw notFound();
     if (!["pending", "accepted", "confirmed", "in_progress", "disputed"].includes(b.status)) throw conflict("This booking cannot be cancelled.");
     const payment = await Payment.findOne({ where: { bookingId: b.id, status: "paid" } });
-    const refunded = payment ? await bookingService.refundPayment(payment, money(payment.totalPaise)) : 0;
+    const refunded = payment ? await bookingService.refundPayment(payment, paymentService.paidValue(payment), { toWallet: req.body.refundTo === "wallet" }) : 0;
     await b.update({ status: "cancelled", cancelledAt: new Date(), cancelReason: req.body.reason || "Cancelled by the platform", refundPaise: refunded });
+    await CouponRedemption.update({ status: "released" }, { where: { bookingId: b.id } });
     await Conversation.update({ isClosed: true }, { where: { bookingId: b.id } });
     await record(req, { action: "booking.admin_cancel", entityType: "booking", entityId: b.id, detail: req.body.reason || null });
     for (const uid of [b.customerId, b.companionId]) {
@@ -1050,7 +1074,7 @@ router.post(
     if (!p || !["paid", "refunded"].includes(p.status)) throw notFound("Only a completed payment can be refunded.");
     const amount = Math.round(Number(req.body.amountPaise) || 0);
     if (amount <= 0) throw badRequest("Enter an amount to refund.");
-    const refunded = await bookingService.refundPayment(p, amount);
+    const refunded = await bookingService.refundPayment(p, amount, { toWallet: req.body.refundTo === "wallet" });
     if (p.bookingId) await Booking.update({ refundPaise: money(p.refundedPaise) }, { where: { id: p.bookingId } });
     await record(req, { action: "payment.refund", entityType: "payment", entityId: p.id, detail: `${refunded} paise. ${req.body.reason || ""}` });
     await notify(p.userId, { type: "refund", title: `Refund of ₹${refunded / 100} issued`, body: req.body.reason || "", link: "/payments-history" });
@@ -1132,7 +1156,7 @@ router.post(
     const action = req.body.action || "none";
     if (["warned", "suspended", "banned"].includes(action)) {
       await User.update({ status: action }, { where: { id: r.reportedId } });
-      if (action !== "warned") await revokeAllForUser(r.reportedId);
+      if (action !== "warned") await endSessions(r.reportedId, action);
       else await notify(r.reportedId, { type: "warning", title: "A warning from our safety team", body: req.body.outcome || "Please review our community guidelines.", link: "/community-guidelines" });
     }
     await r.update({ status, outcome: req.body.outcome || null, handledById: req.admin.id, handledAt: new Date() });
@@ -1198,7 +1222,7 @@ router.get(
       order: [["createdAt", "DESC"]],
       limit: 100,
     });
-    res.json({ alerts: rows.map((a) => ({ id: a.id, status: a.status, user: a.user && { id: a.user.id, name: a.user.fullName, mobile: a.user.mobile, emergencyContact: a.user.profile?.emergencyContactName ? `${a.user.profile.emergencyContactName} · ${a.user.profile.emergencyContactPhone}` : null }, bookingId: a.bookingId, meetingPlace: a.booking?.meetingPlaceName, latitude: a.latitude === null ? null : Number(a.latitude), longitude: a.longitude === null ? null : Number(a.longitude), locationAt: a.locationAt, createdAt: a.createdAt, resolvedNote: a.resolvedNote })) });
+    res.json({ alerts: rows.map((a) => ({ id: a.id, kind: a.kind || "sos", status: a.status, user: a.user && { id: a.user.id, name: a.user.fullName, mobile: a.user.mobile, emergencyContact: a.user.profile?.emergencyContactName ? `${a.user.profile.emergencyContactName} · ${a.user.profile.emergencyContactPhone}` : null }, bookingId: a.bookingId, meetingPlace: a.booking?.meetingPlaceName, latitude: a.latitude === null ? null : Number(a.latitude), longitude: a.longitude === null ? null : Number(a.longitude), locationAt: a.locationAt, createdAt: a.createdAt, resolvedNote: a.resolvedNote })) });
   })
 );
 
@@ -1374,6 +1398,177 @@ router.put(
     await row.update(patch);
     await record(req, { action: "staff.update", entityType: "admin", entityId: row.id, detail: JSON.stringify(patch) });
     res.json({ ok: true });
+  })
+);
+
+/* ------------------------------ wallet, ratings ------------------------------ */
+
+/** A manual wallet adjustment: + to credit, − to take back. Reason required. */
+router.post(
+  "/users/:id(\\d+)/wallet",
+  FIN,
+  wrap(async (req, res) => {
+    const u = await User.findByPk(req.params.id);
+    if (!u) throw notFound();
+    const amount = Math.round(Number(req.body.amountPaise));
+    const reason = String(req.body.reason || "").trim();
+    if (!Number.isFinite(amount) || amount === 0 || Math.abs(amount) > 10000000) throw badRequest("Enter an amount (up to ₹1,00,000).");
+    if (reason.length < 4) throw badRequest("Give a reason — the member sees it on their statement.");
+    const row = amount > 0
+      ? await walletLib.credit(u.id, amount, { kind: "admin", note: reason, adminId: req.admin.id })
+      : await walletLib.debit(u.id, -amount, { kind: "admin", note: reason, adminId: req.admin.id });
+    await record(req, { action: "wallet.adjust", entityType: "user", entityId: u.id, detail: `${amount} paise: ${reason}` });
+    await notify(u.id, { type: "wallet", title: amount > 0 ? `₹${amount / 100} added to your wallet` : `₹${-amount / 100} taken from your wallet`, body: reason, link: "/wallet" });
+    res.json({ ok: true, balancePaise: Number(row.balanceAfterPaise) });
+  })
+);
+
+router.get(
+  "/users/:id(\\d+)/wallet",
+  FIN,
+  wrap(async (req, res) => res.json({ balancePaise: await walletLib.balance(req.params.id), transactions: await walletLib.statement(req.params.id) }))
+);
+
+/** Clears an automatic low-rating review; a Companion goes back into search. */
+router.post(
+  "/users/:id(\\d+)/rating-review/clear",
+  MOD,
+  wrap(async (req, res) => {
+    const u = await User.findByPk(req.params.id, { include: [{ model: Profile, as: "profile" }] });
+    if (!u?.profile) throw notFound();
+    const note = String(req.body.note || "").slice(0, 300);
+    const patch = { ratingReviewAt: null };
+    if (u.role === "companion" && u.profile.approvalStatus === "pending" && String(u.profile.approvalNote || "").includes("under review")) {
+      patch.approvalStatus = req.body.keepHidden ? "rejected" : "approved";
+      patch.approvalNote = req.body.keepHidden ? note || "Low ratings" : null;
+    }
+    await u.profile.update(patch);
+    if (u.role === "customer" && u.status === "warned" && !req.body.keepHidden) await u.update({ status: "active" });
+    await record(req, { action: "rating_review.clear", entityType: "user", entityId: u.id, detail: note || null });
+    res.json({ ok: true });
+  })
+);
+
+/* ------------------------------ coupons ------------------------------ */
+
+function couponInput(body) {
+  const out = {};
+  if (body.code !== undefined) {
+    out.code = couponsLib.tidyCode(body.code);
+    if (!/^[A-Z0-9_-]{3,30}$/.test(out.code)) throw badRequest("Codes are 3–30 letters, numbers, - or _.");
+  }
+  if (body.description !== undefined) out.description = String(body.description || "").slice(0, 200) || null;
+  if (body.kind !== undefined) {
+    if (!["percent", "flat"].includes(body.kind)) throw badRequest("Kind is percent or flat.");
+    out.kind = body.kind;
+  }
+  if (body.value !== undefined) out.value = Math.round(Number(body.value));
+  for (const k of ["maxDiscountPaise", "usageLimit"]) {
+    if (body[k] !== undefined) out[k] = body[k] === "" || body[k] === null ? null : Math.round(Number(body[k]));
+  }
+  if (body.minAmountPaise !== undefined) out.minAmountPaise = Math.max(0, Math.round(Number(body.minAmountPaise) || 0));
+  if (body.perUserLimit !== undefined) out.perUserLimit = Math.max(1, Math.round(Number(body.perUserLimit) || 1));
+  for (const k of ["firstBookingOnly", "isActive"]) if (body[k] !== undefined) out[k] = body[k] === true || body[k] === "true";
+  for (const k of ["startsAt", "endsAt"]) if (body[k] !== undefined) out[k] = body[k] ? new Date(body[k]) : null;
+  const kind = out.kind;
+  if (out.value !== undefined) {
+    if (!Number.isFinite(out.value) || out.value <= 0) throw badRequest("Enter the discount.");
+    if (kind === "percent" && out.value > 100) throw badRequest("A percentage is at most 100.");
+  }
+  return out;
+}
+
+router.get(
+  "/coupons",
+  FIN,
+  wrap(async (req, res) => {
+    const rows = await Coupon.findAll({ order: [["createdAt", "DESC"]] });
+    const stats = await CouponRedemption.findAll({
+      where: { status: "used" },
+      attributes: ["couponId", [sequelize.fn("COUNT", sequelize.col("id")), "uses"], [sequelize.fn("SUM", sequelize.col("discount_paise")), "discount"]],
+      group: ["couponId"],
+      raw: true,
+    });
+    const by = Object.fromEntries(stats.map((r) => [r.couponId, r]));
+    res.json({ coupons: rows.map((c) => couponsLib.couponJson(c, { withStats: { uses: Number(by[c.id]?.uses || 0), discountGivenPaise: Number(by[c.id]?.discount || 0) } })) });
+  })
+);
+
+router.post(
+  "/coupons",
+  FIN,
+  wrap(async (req, res) => {
+    const data = couponInput({ kind: "percent", ...req.body });
+    if (!data.code || !data.value) throw badRequest("A code and a discount are needed.");
+    if (await Coupon.findOne({ where: { code: data.code } })) throw conflict("That code already exists.");
+    const c = await Coupon.create(data);
+    await record(req, { action: "coupon.create", entityType: "coupon", entityId: c.id, detail: c.code });
+    res.status(201).json(couponsLib.couponJson(c));
+  })
+);
+
+router.put(
+  "/coupons/:id(\\d+)",
+  FIN,
+  wrap(async (req, res) => {
+    const c = await Coupon.findByPk(req.params.id);
+    if (!c) throw notFound();
+    const data = couponInput({ kind: c.kind, ...req.body });
+    if (data.code && data.code !== c.code && (await Coupon.findOne({ where: { code: data.code } }))) throw conflict("That code already exists.");
+    await c.update(data);
+    await record(req, { action: "coupon.update", entityType: "coupon", entityId: c.id, detail: c.code });
+    res.json(couponsLib.couponJson(c));
+  })
+);
+
+/* ------------------------------ public places ------------------------------ */
+
+function placeInput(body) {
+  const out = {};
+  for (const k of ["name", "type", "city", "area", "address"]) if (body[k] !== undefined) out[k] = String(body[k] || "").trim().slice(0, k === "address" ? 300 : 160) || null;
+  if (body.latitude !== undefined) out.latitude = Number(body.latitude);
+  if (body.longitude !== undefined) out.longitude = Number(body.longitude);
+  if (body.isActive !== undefined) out.isActive = body.isActive === true || body.isActive === "true";
+  if (out.type && !profileService.MEETING_PLACE_TYPES.some((t) => t.id === out.type)) throw badRequest("Pick a place type.");
+  if (out.latitude !== undefined && !(Math.abs(out.latitude) <= 90)) throw badRequest("Latitude must be between -90 and 90.");
+  if (out.longitude !== undefined && !(Math.abs(out.longitude) <= 180)) throw badRequest("Longitude must be between -180 and 180.");
+  if (out.name !== undefined && (!out.name || out.name.length < 3)) throw badRequest("Name the place.");
+  return out;
+}
+
+router.get(
+  "/places",
+  MOD,
+  wrap(async (req, res) => {
+    const where = {};
+    if (req.query.city) where.city = req.query.city;
+    const rows = await PublicPlace.findAll({ where, order: [["city", "ASC"], ["area", "ASC"], ["name", "ASC"]] });
+    res.json({ places: rows.map(placeJson), types: profileService.MEETING_PLACE_TYPES });
+  })
+);
+
+router.post(
+  "/places",
+  MOD,
+  wrap(async (req, res) => {
+    const data = placeInput(req.body);
+    for (const k of ["name", "type", "city"]) if (!data[k]) throw badRequest(`Enter the ${k}.`);
+    if (!Number.isFinite(data.latitude) || !Number.isFinite(data.longitude)) throw badRequest("Enter the map position (latitude and longitude).");
+    const p = await PublicPlace.create(data);
+    await record(req, { action: "place.create", entityType: "place", entityId: p.id, detail: p.name });
+    res.status(201).json(placeJson(p));
+  })
+);
+
+router.put(
+  "/places/:id(\\d+)",
+  MOD,
+  wrap(async (req, res) => {
+    const p = await PublicPlace.findByPk(req.params.id);
+    if (!p) throw notFound();
+    await p.update(placeInput(req.body));
+    await record(req, { action: "place.update", entityType: "place", entityId: p.id, detail: p.name });
+    res.json(placeJson(p));
   })
 );
 

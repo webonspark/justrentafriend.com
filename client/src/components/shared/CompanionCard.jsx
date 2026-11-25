@@ -1,9 +1,24 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { FiCheckCircle, FiMapPin, FiStar } from "react-icons/fi";
+import { FiCheckCircle, FiHeart, FiMapPin, FiStar, FiZap } from "react-icons/fi";
+import { api } from "../../services/api";
 import { Avatar, Badge, Price } from "../ui";
 
-/** One Companion in a Discover grid. */
-export default function CompanionCard({ c }) {
+/** One Companion in a Discover grid. The heart saves them to favourites. */
+export default function CompanionCard({ c, onFavorite }) {
+  const [fav, setFav] = useState(Boolean(c.favorite));
+  const toggle = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const next = !fav;
+    setFav(next);
+    try {
+      await api.favorite(c.id, next);
+      onFavorite?.(c.id, next);
+    } catch {
+      setFav(!next);
+    }
+  };
   return (
     <Link to={`/companions/${c.id}`} className="k-card k-card-link block overflow-hidden" style={{ padding: 0 }}>
       <div className="relative aspect-[4/3] bg-ink-high">
@@ -14,13 +29,28 @@ export default function CompanionCard({ c }) {
             <Avatar name={c.name} size={88} />
           </div>
         )}
-        {c.verified && (
-          <span className="absolute left-3 top-3">
+        <span className="absolute left-3 top-3 flex flex-wrap gap-1">
+          {c.availableNow && (
+            <Badge tone="accent">
+              <FiZap className="mr-1 inline" size={12} /> Available now
+            </Badge>
+          )}
+          {c.verified && (
             <Badge tone="good">
               <FiCheckCircle className="mr-1 inline" size={12} /> Verified
             </Badge>
-          </span>
-        )}
+          )}
+        </span>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-pressed={fav}
+          aria-label={fav ? `Remove ${c.firstName} from favourites` : `Save ${c.firstName} to favourites`}
+          className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full"
+          style={{ background: "rgba(0,0,0,.45)", border: 0, color: fav ? "var(--rose)" : "#fff" }}
+        >
+          <FiHeart size={17} style={fav ? { fill: "currentColor" } : undefined} />
+        </button>
       </div>
       <div className="p-4">
         <div className="mb-1 flex items-baseline justify-between gap-2">
